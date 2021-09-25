@@ -17,4 +17,7 @@ pub fn main() anyerror!void {
     });
 
     std.log.info("This first argument was: {s}", .{first_arg});
+
+    // TODO: Start by implementing llvm-ar t archive.a
+    // (Prints all the file names)
 }
