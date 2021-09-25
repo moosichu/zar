@@ -1,4 +1,7 @@
 const std = @import("std");
+const fs = std.fs;
+
+const Archive = @import("archive/Archive.zig");
 
 pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -16,8 +19,17 @@ pub fn main() anyerror!void {
         return error.InvalidArgs;
     });
 
-    std.log.info("This first argument was: {s}", .{first_arg});
+    std.log.info("The first argument was: {s}", .{first_arg});
+
+    const path = first_arg;
+
+    const file = try fs.cwd().openFile(path, .{});
+
+    var archive = Archive.create(file, path);
+
+    try archive.parse(allocator);
 
     // TODO: Start by implementing llvm-ar t archive.a
     // (Prints all the file names)
+
 }

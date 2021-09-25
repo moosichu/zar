@@ -1,4 +1,5 @@
 pub const ArchiveType = enum {
+    ambiguous,
     gnu,
     gnu_64,
     bsd,
@@ -7,12 +8,12 @@ pub const ArchiveType = enum {
 };
 
 // All archive files start with this magic string
-const magic_string = "!<arch>\n";
+pub const magic_string = "!<arch>\n";
 
 // The format (unparsed) of the archive per-file header
 // NOTE: The reality is more complex than this as different mechanisms
 // have been devised for storing the names of files which exceed 16 byte!
-const ar_hdr = extern struct {
+pub const ar_hdr = extern struct {
     ar_name: [16]u8,
     ar_date: [12]u8,
     ar_uid: [6]u8,
@@ -22,6 +23,6 @@ const ar_hdr = extern struct {
     ar_fmag: [2]u8,
 };
 
-const ar_processed = struct {
-    name : [] const u8,
+pub const ar_processed = struct {
+    name: []const u8,
 };
