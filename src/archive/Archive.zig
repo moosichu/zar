@@ -109,29 +109,37 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             gnu_offset_value = try fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
         }
 
-        const could_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
+        const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
 
-        // const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], format.bsd_name_length_signifier[0..2]);
-        // TODO:!
-
+        // Check against bsd naming properties
+        const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], format.bsd_name_length_signifier[0..2]);
+        const could_be_bsd = starts_with_bsd_name_length;
 
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
         switch (self.archive_type) {
             .ambiguous => {
-                if (could_be_gnu) {
+                if (must_be_gnu) {
                     self.archive_type = .gnu;
+                } else if (could_be_bsd) {
+                    self.archive_type = .bsd;
                 } else {
                     return error.TODO;
                 }
             },
             .gnu, .gnu64 => {
-                if (!could_be_gnu) {
+                if (!must_be_gnu) {
                     try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
-                    return error.NotArchive;
+                    return error.BadArchive;
+                }
+            },
+            .bsd, .darwin64 => {
+                if (must_be_gnu) {
+                    try stderr.print("Error parsing archive header name - format of {s} wasn't bsd compatible\n", .{trimmed_archive_name});
+                    return error.BadArchive;
                 }
             },
             else => {
-                if (could_be_gnu) {
+                if (must_be_gnu) {
                     return error.TODO;
                 }
 
