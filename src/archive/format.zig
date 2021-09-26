@@ -7,6 +7,17 @@ pub const ArchiveType = enum {
     coff, // (windows)
 };
 
+pub const Operation = enum {
+    insert,
+    delete,
+    move,
+    print,
+    quick_append,
+    ranlib,
+    display_contents,
+    extract,
+};
+
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
 

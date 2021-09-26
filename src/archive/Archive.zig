@@ -59,8 +59,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
         try self.archive_headers.append(allocator, archive_header);
 
         try reader.context.seekBy(try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10));
-
-        log.debug("{s}", .{archive_header.ar_name});
     }
 
     // TODO: Read and parse the ar_hdr headers!
