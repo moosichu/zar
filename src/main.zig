@@ -122,10 +122,17 @@ pub fn main() anyerror!void {
             defer file.close();
 
             var archive = Archive.create(file, archive_path);
-            try archive.parse(allocator);
-
-            for (archive.parsed_files.items) |parsed_file| {
-                try stdout.print("{s}\n", .{parsed_file.name});
+            if (archive.parse(allocator, stderr)) {
+                for (archive.parsed_files.items) |parsed_file| {
+                    try stdout.print("{s}\n", .{parsed_file.name});
+                }
+            } else |err| switch (err) {
+                // These are errors we know how to handle
+                error.NotArchive => {
+                    // archive.parse prints appropriate errors for these messages
+                    return;
+                },
+                else => return err,
             }
         },
         else => {

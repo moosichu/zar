@@ -28,19 +28,19 @@ pub fn create(
     };
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator) !void {
+pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
         const magic = reader.readBytesNoEof(format.magic_string.len) catch |err| switch (err) {
             error.EndOfStream => {
-                log.debug("File too short to be an archive", .{});
+                try stderr.print("File too short to be an archive\n", .{});
                 return error.NotArchive;
             },
             else => |e| return e,
         };
         if (!mem.eql(u8, &magic, format.magic_string)) {
-            log.debug("Invalid magic string: expected '{s}', found '{s}'", .{ format.magic_string, magic });
+            try stderr.print("Invalid magic string: expected '{s}', found '{s}'\n", .{ format.magic_string, magic });
             return error.NotArchive;
         }
     }
