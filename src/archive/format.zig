@@ -20,8 +20,13 @@ pub const Operation = enum {
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
+
+// GNU constants
 pub const gnu_first_line_buffer_length = 60;
 pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_length;
+
+// BSD constants
+pub const bsd_name_length_signifier = "#1/";
 
 // The format (unparsed) of the archive per-file header
 // NOTE: The reality is more complex than this as different mechanisms
@@ -36,6 +41,10 @@ pub const ar_hdr = extern struct {
     ar_fmag: [2]u8,
 };
 
-pub const ParsedFile = struct {
+// An internal represantion of files being archived
+pub const ArchivedFile = struct {
     name: []const u8,
+    // TODO - represent contents (using tagged union?)
+    // that can either be a file-handle, or a seek position in the
+    // archive we are looking at.
 };

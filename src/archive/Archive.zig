@@ -13,7 +13,7 @@ file: fs.File,
 name: []const u8,
 archive_type: format.ArchiveType,
 archive_headers: std.ArrayListUnmanaged(format.ar_hdr),
-parsed_files: std.ArrayListUnmanaged(format.ParsedFile),
+parsed_files: std.ArrayListUnmanaged(format.ArchivedFile),
 
 pub fn create(
     file: fs.File,
@@ -111,6 +111,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         const could_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
 
+        // const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], format.bsd_name_length_signifier[0..2]);
+        // TODO:!
+
+
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
         switch (self.archive_type) {
             .ambiguous => {
@@ -166,7 +170,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = string_full[0 .. string_full.len - 1];
         }
 
-        const parsed_file = format.ParsedFile{
+        const parsed_file = format.ArchivedFile{
             .name = trimmed_archive_name,
         };
 
