@@ -34,6 +34,6 @@ pub const ar_hdr = extern struct {
     ar_fmag: [2]u8,
 };
 
-pub const ar_processed = struct {
+pub const ParsedFile = struct {
     name: []const u8,
 };

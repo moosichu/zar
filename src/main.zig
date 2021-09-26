@@ -124,9 +124,8 @@ pub fn main() anyerror!void {
             var archive = Archive.create(file, archive_path);
             try archive.parse(allocator);
 
-            for (archive.archive_headers.items) |archive_header| {
-                // TODO: print actual parsed name!
-                try stdout.print("{s}\n", .{archive_header.ar_name});
+            for (archive.parsed_files.items) |parsed_file| {
+                try stdout.print("{s}\n", .{parsed_file.name});
             }
         },
         else => {

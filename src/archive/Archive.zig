@@ -13,7 +13,7 @@ file: fs.File,
 name: []const u8,
 archive_type: format.ArchiveType,
 archive_headers: std.ArrayListUnmanaged(format.ar_hdr),
-archives: std.ArrayListUnmanaged(format.ar_processed),
+parsed_files: std.ArrayListUnmanaged(format.ParsedFile),
 
 pub fn create(
     file: fs.File,
@@ -24,7 +24,7 @@ pub fn create(
         .name = name,
         .archive_type = .ambiguous,
         .archive_headers = .{},
-        .archives = .{},
+        .parsed_files = .{},
     };
 }
 
@@ -57,6 +57,14 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
         };
 
         try self.archive_headers.append(allocator, archive_header);
+
+        // the lifetime of the archive headers will matched that of the parsed files (for now)
+        // so we can take a reference to the string stored there.
+        const parsed_file = format.ParsedFile{
+            .name = &(self.archive_headers.items[self.archive_headers.items.len - 1].ar_name),
+        };
+
+        try self.parsed_files.append(allocator, parsed_file);
 
         try reader.context.seekBy(try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10));
     }
