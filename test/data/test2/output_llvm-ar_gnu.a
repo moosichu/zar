@@ -1,7 +1,7 @@
 !<arch>
-//                                              50        `
+//                                              98        `
 input3_that_is_also_a_much_longer_file_name.txt/
-
+input4_that_is_also_a_much_longer_file_name.txt/
 input1.txt/     0           0     0     644     46        `
 The
 Quick Brown
@@ -27,3 +27,12 @@ Hopefully....
 ~~~~
 
 Something useful is made.
+/49             0           0     0     644     90        `
+Hello - there,
+Brand new friend...
+
+Some nonsense text -
+For
+The ARCHIVES
+Test
+Will be???
