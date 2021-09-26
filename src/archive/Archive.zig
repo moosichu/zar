@@ -59,9 +59,42 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         try self.archive_headers.append(allocator, archive_header);
 
         // the lifetime of the archive headers will matched that of the parsed files (for now)
-        // so we can take a reference to the string stored there.
+        // so we can take a reference to the strings stored there directly!
+        const trimmed_archive_name = mem.trim(u8, &(self.archive_headers.items[self.archive_headers.items.len - 1].ar_name), " ");
+
+        // Gnu file-names eitehr
+        var gnu_offset_value: u32 = 0;
+        const starts_with_gnu_offset = (trimmed_archive_name[0] == '/');
+        if (starts_with_gnu_offset) {
+            // TODO: handle this going wrong gracefully!
+            gnu_offset_value = try fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
+        }
+
+        const could_be_gnu = (trimmed_archive_name[trimmed_archive_name.len - 1] == '/') or starts_with_gnu_offset;
+
+        // TODO: Have a proper mechanism for erroring on the wrong types of archive.
+        switch (self.archive_type) {
+            .ambiguous => {
+                if (could_be_gnu) {
+                    self.archive_type = .gnu;
+                }
+            },
+            .gnu, .gnu64 => {
+                if (!could_be_gnu) {
+                    try stderr.print("Error parsing archive header name\n", .{});
+                    return error.NotArchive;
+                }
+            },
+            else => {
+                if (could_be_gnu) {
+                    try stderr.print("Error parsing archive header name\n", .{});
+                    return error.NotArchive;
+                }
+            },
+        }
+
         const parsed_file = format.ParsedFile{
-            .name = &(self.archive_headers.items[self.archive_headers.items.len - 1].ar_name),
+            .name = trimmed_archive_name,
         };
 
         try self.parsed_files.append(allocator, parsed_file);

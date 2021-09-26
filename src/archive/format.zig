@@ -1,9 +1,9 @@
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
-    gnu_64,
+    gnu64,
     bsd,
-    darwin_64, // darwin_32 *is* bsd
+    darwin64, // darwin_32 *is* bsd
     coff, // (windows)
 };
 
