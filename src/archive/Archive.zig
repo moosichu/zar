@@ -47,10 +47,11 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
     // https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5
     // Process string/symbol tables and/or try to infer archive type!
+    var string_table_contents: []u8 = undefined;
     {
         var starting_seek_pos = format.magic_string.len;
 
-        var first_line_buffer: [60]u8 = undefined;
+        var first_line_buffer: [format.gnu_first_line_buffer_length]u8 = undefined;
 
         const has_line_to_process = result: {
             const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
@@ -65,7 +66,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         };
 
         if (has_line_to_process) {
-            if (first_line_buffer[0..1] == "//"[0..1]) {
+            if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
                 switch (self.archive_type) {
                     .ambiguous => self.archive_type = .gnu,
                     .gnu, .gnu64 => {},
@@ -77,6 +78,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                 const table_size_string = first_line_buffer[48..58];
                 const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+
+                string_table_contents = try allocator.alloc(u8, table_size);
+                // TODO: actually error handle not expected number of bytes being read!
+                _ = try reader.read(string_table_contents);
                 starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
             }
         }
@@ -99,9 +104,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         // Check against gnu naming properties
         const ends_with_gnu_slash = (trimmed_archive_name[trimmed_archive_name.len - 1] == '/');
         var gnu_offset_value: u32 = 0;
-        const starts_with_gnu_offset = (trimmed_archive_name[0] == '/');
+        const starts_with_gnu_offset = trimmed_archive_name[0] == '/';
         if (starts_with_gnu_offset) {
-            // TODO: handle this going wrong gracefully!
             gnu_offset_value = try fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
         }
 
@@ -118,14 +122,13 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
             .gnu, .gnu64 => {
                 if (!could_be_gnu) {
-                    try stderr.print("Error parsing archive header name\n", .{});
+                    try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
                     return error.NotArchive;
                 }
             },
             else => {
                 if (could_be_gnu) {
-                    try stderr.print("Error parsing archive header name\n", .{});
-                    return error.NotArchive;
+                    return error.TODO;
                 }
 
                 return error.TODO;
@@ -137,6 +140,32 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = trimmed_archive_name[0 .. trimmed_archive_name.len - 1];
         }
 
+        if (starts_with_gnu_offset) {
+            const name_offset_in_string_table = try fmt.parseInt(u32, mem.trim(u8, trimmed_archive_name[1..trimmed_archive_name.len], " "), 10);
+
+            // Navigate to the start of the string in the string table
+            const string_start = string_table_contents[name_offset_in_string_table..string_table_contents.len];
+
+            // Find the end of the string (which is always a newline)
+            const end_string_index = mem.indexOf(u8, string_start, "\n");
+            if (end_string_index == null) {
+                try stderr.print("Error parsing name in string table, couldn't find terminating character\n", .{});
+                return error.NotArchive;
+            }
+            const string_full = string_start[0..end_string_index.?];
+
+            // String must have a forward slash before the newline, so check that
+            // is there and remove it as well!
+            if (string_full[string_full.len - 1] != '/') {
+                try stderr.print("Error parsing name in string table, didn't find '/' before terminating newline\n", .{});
+                return error.NotArchive;
+            }
+
+            // Referencing the slice directly is fine as same bumb allocator is
+            // used as for the rest of the datastructure!
+            trimmed_archive_name = string_full[0 .. string_full.len - 1];
+        }
+
         const parsed_file = format.ParsedFile{
             .name = trimmed_archive_name,
         };
@@ -145,6 +174,4 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         try reader.context.seekBy(try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10));
     }
-
-    // TODO: Read and parse the ar_hdr headers!
 }
