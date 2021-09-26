@@ -5,7 +5,6 @@ const mem = std.mem;
 const process = std.process;
 
 const Archive = @import("archive/Archive.zig");
-const format = @import("archive/format.zig");
 
 const overview =
     \\Zig Archiver
@@ -87,14 +86,14 @@ pub fn main() anyerror!void {
             arg_slice = arg_slice[1..arg_slice.len];
         }
         switch (arg_slice[0]) {
-            'r' => break :operation format.Operation.insert,
-            'd' => break :operation format.Operation.delete,
-            'm' => break :operation format.Operation.move,
-            'p' => break :operation format.Operation.print,
-            'w' => break :operation format.Operation.quick_append,
-            's' => break :operation format.Operation.ranlib,
-            't' => break :operation format.Operation.display_contents,
-            'x' => break :operation format.Operation.extract,
+            'r' => break :operation Archive.Operation.insert,
+            'd' => break :operation Archive.Operation.delete,
+            'm' => break :operation Archive.Operation.move,
+            'p' => break :operation Archive.Operation.print,
+            'w' => break :operation Archive.Operation.quick_append,
+            's' => break :operation Archive.Operation.ranlib,
+            't' => break :operation Archive.Operation.display_contents,
+            'x' => break :operation Archive.Operation.extract,
             else => {
                 try printError(stderr, "a valid operation must be provided");
                 return;
@@ -123,7 +122,7 @@ pub fn main() anyerror!void {
 
             var archive = Archive.create(file, archive_path);
             if (archive.parse(allocator, stderr)) {
-                for (archive.parsed_files.items) |parsed_file| {
+                for (archive.files.items) |parsed_file| {
                     try stdout.print("{s}\n", .{parsed_file.name});
                 }
             } else |err| switch (err) {

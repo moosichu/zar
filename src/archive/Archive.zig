@@ -5,15 +5,70 @@ const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
 const log = std.log.scoped(.archive);
-const format = @import("format.zig");
 
 const Allocator = std.mem.Allocator;
 
 file: fs.File,
 name: []const u8,
-archive_type: format.ArchiveType,
-archive_headers: std.ArrayListUnmanaged(format.ar_hdr),
-parsed_files: std.ArrayListUnmanaged(format.ArchivedFile),
+archive_type: ArchiveType,
+
+// These are currently seperate so we can append
+// header values to array seperately and then have
+// the parsed file point to slices into that memory
+// that we know will remain persistent.
+headers: std.ArrayListUnmanaged(Header),
+files: std.ArrayListUnmanaged(ArchivedFile),
+
+pub const ArchiveType = enum {
+    ambiguous,
+    gnu,
+    gnu64,
+    bsd,
+    darwin64, // darwin_32 *is* bsd
+    coff, // (windows)
+};
+
+pub const Operation = enum {
+    insert,
+    delete,
+    move,
+    print,
+    quick_append,
+    ranlib,
+    display_contents,
+    extract,
+};
+
+// All archive files start with this magic string
+pub const magic_string = "!<arch>\n";
+
+// GNU constants
+pub const gnu_first_line_buffer_length = 60;
+pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_length;
+
+// BSD constants
+pub const bsd_name_length_signifier = "#1/";
+
+// The format (unparsed) of the archive per-file header
+// NOTE: The reality is more complex than this as different mechanisms
+// have been devised for storing the names of files which exceed 16 byte!
+pub const Header = extern struct {
+    ar_name: [16]u8,
+    ar_date: [12]u8,
+    ar_uid: [6]u8,
+    ar_gid: [6]u8,
+    ar_mode: [8]u8,
+    ar_size: [10]u8,
+    ar_fmag: [2]u8,
+};
+
+// An internal represantion of files being archived
+pub const ArchivedFile = struct {
+    name: []const u8,
+    // TODO - represent contents (using tagged union?)
+    // that can either be a file-handle, or a seek position in the
+    // archive we are looking at.
+};
 
 pub fn create(
     file: fs.File,
@@ -23,8 +78,8 @@ pub fn create(
         .file = file,
         .name = name,
         .archive_type = .ambiguous,
-        .archive_headers = .{},
-        .parsed_files = .{},
+        .headers = .{},
+        .files = .{},
     };
 }
 
@@ -32,15 +87,15 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
-        const magic = reader.readBytesNoEof(format.magic_string.len) catch |err| switch (err) {
+        const magic = reader.readBytesNoEof(magic_string.len) catch |err| switch (err) {
             error.EndOfStream => {
                 try stderr.print("File too short to be an archive\n", .{});
                 return error.NotArchive;
             },
             else => |e| return e,
         };
-        if (!mem.eql(u8, &magic, format.magic_string)) {
-            try stderr.print("Invalid magic string: expected '{s}', found '{s}'\n", .{ format.magic_string, magic });
+        if (!mem.eql(u8, &magic, magic_string)) {
+            try stderr.print("Invalid magic string: expected '{s}', found '{s}'\n", .{ magic_string, magic });
             return error.NotArchive;
         }
     }
@@ -49,9 +104,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     // Process string/symbol tables and/or try to infer archive type!
     var string_table_contents: []u8 = undefined;
     {
-        var starting_seek_pos = format.magic_string.len;
+        var starting_seek_pos = magic_string.len;
 
-        var first_line_buffer: [format.gnu_first_line_buffer_length]u8 = undefined;
+        var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
         const has_line_to_process = result: {
             const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
@@ -90,16 +145,16 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     }
 
     while (true) {
-        const archive_header = reader.readStruct(format.ar_hdr) catch |err| switch (err) {
+        const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
             else => |e| return e,
         };
 
-        try self.archive_headers.append(allocator, archive_header);
+        try self.headers.append(allocator, archive_header);
 
         // the lifetime of the archive headers will matched that of the parsed files (for now)
         // so we can take a reference to the strings stored there directly!
-        var trimmed_archive_name = mem.trim(u8, &(self.archive_headers.items[self.archive_headers.items.len - 1].ar_name), " ");
+        var trimmed_archive_name = mem.trim(u8, &(self.headers.items[self.headers.items.len - 1].ar_name), " ");
 
         // Check against gnu naming properties
         const ends_with_gnu_slash = (trimmed_archive_name[trimmed_archive_name.len - 1] == '/');
@@ -112,7 +167,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
 
         // Check against bsd naming properties
-        const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], format.bsd_name_length_signifier[0..2]);
+        const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
         const could_be_bsd = starts_with_bsd_name_length;
 
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
@@ -178,11 +233,11 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = string_full[0 .. string_full.len - 1];
         }
 
-        const parsed_file = format.ArchivedFile{
+        const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
         };
 
-        try self.parsed_files.append(allocator, parsed_file);
+        try self.files.append(allocator, parsed_file);
 
         try reader.context.seekBy(try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10));
     }
