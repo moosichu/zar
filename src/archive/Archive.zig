@@ -67,6 +67,10 @@ pub const FileSource = enum {
     file,
 };
 
+// TODO: file based representation has a problem that when doing delete file operation
+// it is possible that the file contents get replace before it gets written on.
+// This is highly unpredictable and we cannot even guess about which file contents are
+// getting overwritten in which order
 pub const Contents = struct {
     file: fs.File,
     seek_pos: u64,
@@ -131,42 +135,45 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     const writer = self.file.writer();
     try writer.writeAll(magic_string);
-    
-    // TODO: we need support --format
+
+    // TODO: we need support of --format
     self.archive_type = .gnu;
-    
+
+    // GNU format: Create string table
     if (self.archive_type == .gnu) {
         var string_table = std.ArrayList(u8).init(allocator);
         defer string_table.deinit();
-    
+
         // Generate the complete string table
         for (self.files.items) |file, index| {
             var header = &self.headers.items[index];
-            if (header.ar_name[0] == '&') {
-                const is_the_name_allowed = (file.name.len < 16);
-    
-                const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
-                    // Calculate the position of the file in string table
-                    const pos = string_table.items.len;
-    
-                    // Now add the file to string table
-                    try string_table.appendSlice(file.name);
-                    try string_table.appendSlice("/\n");
-    
-                    break :blk pos;
-                }});
-                defer allocator.free(name);
-    
-                _ = try std.fmt.bufPrint(&header.ar_name, "{s: <16}", .{name});
-            }
+            const is_the_name_allowed = (file.name.len < 16);
+
+            // If the file is small enough to fit in header, then just write it there
+            // Otherwise, add it to string table and add a reference to its location
+            const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
+                // Get the position of the file in string table
+                const pos = string_table.items.len;
+
+                // Now add the file name to string table
+                try string_table.appendSlice(file.name);
+                try string_table.appendSlice("/\n");
+
+                break :blk pos;
+            }});
+            defer allocator.free(name);
+
+            // Edit the header
+            _ = try std.fmt.bufPrint(&header.ar_name, "{s: <16}", .{name});
         }
-    
+
         // Write the string table itself
         {
             if (string_table.items.len != 0)
                 try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
         }
     } else if (self.archive_type == .bsd) {
+        // BSD format: Just write the length of the name in header
         for (self.files.items) |file, index| {
             var header = &self.headers.items[index];
             if (header.ar_name[0] == '&') {
@@ -179,7 +186,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     for (self.files.items) |file, index| {
         var header = self.headers.items[index];
         try writer.writeStruct(header);
-        
+
+        // Write the name of the file in the data section
         if (self.archive_type == .bsd) {
             try writer.writeAll(file.name);
         }
