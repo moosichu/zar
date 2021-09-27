@@ -125,16 +125,48 @@ pub fn create(
 // used for parsing. (use same error handling workflow etc.)
 
 /// Use same naming scheme for objects (as found elsewhere in the file).
-pub fn finalize(self: *Archive) !void {
+pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
     const writer = self.file.writer();
     try writer.writeAll(magic_string);
 
+    var string_table = std.ArrayList(u8).init(allocator);
+    defer string_table.deinit();
+
+    // Generate the complete string table
+    for (self.files.items) |file, index| {
+        var header = &self.headers.items[index];
+        if (header.ar_name[0] == '&') {
+            const is_the_name_allowed = (file.name.len < 16);
+
+            const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
+                // Calculate the position of the file in string table
+                const pos = string_table.items.len;
+
+                // Now add the file to string table
+                try string_table.appendSlice(file.name);
+                try string_table.appendSlice("/\n");
+
+                break :blk pos;
+            }});
+            defer allocator.free(name);
+
+            _ = try std.fmt.bufPrint(&header.ar_name, "{s: <16}", .{name});
+            std.debug.print("name: {s}\n", .{name});
+        }
+    }
+
+    // Write the string table itself
+    {
+        try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
+    }
+
     // Write the files
     for (self.files.items) |file, index| {
-        try writer.writeStruct(self.headers.items[index]);
+        var header = self.headers.items[index];
+        try writer.writeStruct(header);
         try file.contents.write(writer, null);
     }
 
@@ -149,16 +181,13 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
             const obj_file = try std.fs.cwd().openFile(file_name, .{ .read = true });
             const stat = try obj_file.stat();
 
-            // TODO: check for if the file is larger than 16-1 bytes and add it to string table
-            const name = try mem.concat(allocator, u8, &.{ file_name, "/" });
-            defer allocator.free(name);
-
             // Write the header
+            // For now, we just write a garbage value to header.name and resolve it later
             var buf = [_]u8{0} ** @sizeOf(Header);
             _ = try std.fmt.bufPrint(
                 &buf,
                 "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-                .{ name, 0, 0, 0, stat.mode, stat.size },
+                .{ "&", 0, 0, 0, stat.mode, stat.size },
             );
 
             const object = ArchivedFile{

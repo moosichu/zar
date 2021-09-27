@@ -122,7 +122,7 @@ pub fn main() anyerror!void {
 
             var archive = Archive.create(file, archive_path);
             try archive.addFiles(allocator, args[arg_index + 1 ..]);
-            try archive.finalize();
+            try archive.finalize(allocator);
         },
         .delete => {
             const file = try fs.cwd().openFile(archive_path, .{ .write = true });
@@ -131,7 +131,7 @@ pub fn main() anyerror!void {
             var archive = Archive.create(file, archive_path);
             if (archive.parse(allocator, stderr)) {
                 try archive.deleteFiles(args[arg_index + 1 ..]);
-                try archive.finalize();
+                try archive.finalize(allocator);
             } else |err| return err;
         },
         .display_contents => {
