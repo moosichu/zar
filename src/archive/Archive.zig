@@ -63,20 +63,19 @@ pub const Header = extern struct {
 };
 
 pub const FileSource = enum {
-    memory, // TODO: remove this?
     archive,
     file,
 };
 
 pub const Contents = struct {
-    // memory representation
-    bytes: []u8,
-
     file: fs.File,
     seek_pos: u64,
     length: u64,
     file_source: FileSource,
-    pub fn print(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
+
+    // TODO: dellocation
+
+    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
         try self.file.seekTo(self.seek_pos);
         var reader = self.file.reader();
 
@@ -136,8 +135,7 @@ pub fn finalize(self: *Archive) !void {
     // Write the files
     for (self.files.items) |file, index| {
         try writer.writeStruct(self.headers.items[index]);
-        // TODO: make this work with file sourced archive
-        try writer.writeAll(file.contents.bytes);
+        try file.contents.write(writer, null);
     }
 
     // Truncate the file size
@@ -149,9 +147,6 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
         for (names) |file_name| {
             // Open the file and read all of its contents
             const obj_file = try std.fs.cwd().openFile(file_name, .{ .read = true });
-            defer obj_file.close();
-
-            const data = try obj_file.readToEndAlloc(allocator, std.math.maxInt(usize));
             const stat = try obj_file.stat();
 
             // TODO: check for if the file is larger than 16-1 bytes and add it to string table
@@ -166,15 +161,13 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
                 .{ name, 0, 0, 0, stat.mode, stat.size },
             );
 
-            // TODO: Fix this! (Remove need for file_source memory).
             const object = ArchivedFile{
                 .name = file_name,
                 .contents = Contents{
-                    .file_source = .memory,
-                    .bytes = data,
-                    .file = undefined,
-                    .seek_pos = undefined,
-                    .length = undefined,
+                    .file_source = .file,
+                    .file = obj_file,
+                    .seek_pos = 0,
+                    .length = stat.size,
                 },
             };
 
@@ -415,7 +408,6 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = archive_name_buffer;
         }
 
-        // const size = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10);
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
             .contents = Contents{
@@ -423,14 +415,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 .seek_pos = try reader.context.getPos(),
                 .length = seek_forward_amount,
                 .file_source = .archive,
-                .bytes = try allocator.alloc(u8, seek_forward_amount),
             },
         };
 
-        // Read file contents - TODO: don't do this.
-        try reader.readNoEof(parsed_file.contents.bytes);
-        // try reader.context.seekBy(seek_forward_amount);
-
         try self.files.append(allocator, parsed_file);
+        try reader.context.seekBy(seek_forward_amount);
     }
 }

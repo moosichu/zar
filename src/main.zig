@@ -159,7 +159,7 @@ pub fn main() anyerror!void {
             var archive = Archive.create(file, archive_path);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
-                    try parsed_file.contents.print(stdout, stderr);
+                    try parsed_file.contents.write(stdout, stderr);
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle
