@@ -134,6 +134,24 @@ pub fn main() anyerror!void {
                 else => return err,
             }
         },
+        .print => {
+            const file = try fs.cwd().openFile(archive_path, .{});
+            defer file.close();
+
+            var archive = Archive.create(file, archive_path);
+            if (archive.parse(allocator, stderr)) {
+                for (archive.files.items) |parsed_file| {
+                    try parsed_file.contents.print(stdout, stderr);
+                }
+            } else |err| switch (err) {
+                // These are errors we know how to handle
+                error.NotArchive => {
+                    // archive.parse prints appropriate errors for these messages
+                    return;
+                },
+                else => return err,
+            }
+        },
         else => {
             std.debug.warn("Operation {} still needs to be implemented!\n", .{operation});
             return error.TODO;

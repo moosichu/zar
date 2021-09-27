@@ -62,12 +62,43 @@ pub const Header = extern struct {
     ar_fmag: [2]u8,
 };
 
+pub const FileSource = enum {
+    Archive,
+    File,
+};
+
+pub const Contents = struct {
+    file: fs.File,
+    seek_pos: u64,
+    length: u64,
+    file_source: FileSource,
+    pub fn print(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
+        try self.file.seekTo(self.seek_pos);
+        var reader = self.file.reader();
+        var buffer : [1000]u8 = undefined;
+        var total_bytes_read: u64 = 0;
+
+        while (true) {
+            const bytes_read = try reader.read(buffer[0..std.math.min(buffer.len, self.length - total_bytes_read)]);
+            if (bytes_read == 0) {
+                break;
+            }
+
+            total_bytes_read = total_bytes_read + bytes_read;
+            _ = try out_stream.write(buffer[0..bytes_read]);
+
+            if (total_bytes_read >= self.length) {
+                break;
+            }
+        }
+        _ = stderr;
+    }
+};
+
 // An internal represantion of files being archived
 pub const ArchivedFile = struct {
     name: []const u8,
-    // TODO - represent contents (using tagged union?)
-    // that can either be a file-handle, or a seek position in the
-    // archive we are looking at.
+    contents: Contents,
 };
 
 pub fn create(
@@ -253,6 +284,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
+            .contents = Contents{
+                .file = reader.context,
+                .seek_pos = try reader.context.getPos(),
+                .length = seek_forward_amount,
+                .file_source = .Archive,
+            },
         };
 
         try self.files.append(allocator, parsed_file);
