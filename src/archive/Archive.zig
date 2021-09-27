@@ -68,6 +68,7 @@ pub const ArchivedFile = struct {
     // TODO - represent contents (using tagged union?)
     // that can either be a file-handle, or a seek position in the
     // archive we are looking at.
+    contents: []u8,
 };
 
 pub fn create(
@@ -82,6 +83,58 @@ pub fn create(
         .files = .{},
     };
 }
+
+pub fn finalize(self: *Archive) !void {    
+    // Overwrite all contents
+    try self.file.seekTo(0);
+
+    const writer = self.file.writer();
+    try writer.writeAll(magic_string);
+
+    // Write the files
+    for (self.files.items) |file, index| {
+        try writer.writeStruct(self.headers.items[index]);
+        try writer.writeAll(file.contents);
+    }
+    
+    // Truncate the file size
+    try self.file.setEndPos(try self.file.getPos());
+}
+
+pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
+    if (file_names) |names| {
+        for (names) |file_name| {
+            // Open the file and read all of its contents
+            const obj_file = try std.fs.cwd().openFile(file_name, .{ .read = true });
+            defer obj_file.close();
+
+            const data = try obj_file.readToEndAlloc(allocator, std.math.maxInt(usize));
+            const stat = try obj_file.stat();
+
+            // TODO: check for if the file is larger than 16-1 bytes and add it to string table 
+            const name = try mem.concat(allocator, u8, &.{ file_name, "/" });
+            defer allocator.free(name);
+
+            // Write the header
+            var buf = [_]u8{0} ** @sizeOf(Header);
+            _ = try std.fmt.bufPrint(
+                &buf,
+                "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
+                .{ name, 0, 0, 0, stat.mode, stat.size },
+            );
+
+            const object = ArchivedFile{
+                .name = file_name,
+                .contents = data,
+            };
+    
+            // Append header and file contents
+            try self.headers.append(allocator, @ptrCast(*Header, &buf).*);
+            try self.files.append(allocator, object);
+        }
+    }
+}
+
 
 pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
@@ -253,6 +306,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
+            .contents = undefined,
         };
 
         try self.files.append(allocator, parsed_file);

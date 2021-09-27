@@ -116,6 +116,14 @@ pub fn main() anyerror!void {
     const archive_path = args[arg_index];
 
     switch (operation) {
+        .insert => {
+            const file = try fs.cwd().createFile(archive_path, .{});
+            defer file.close();
+            
+            var archive = Archive.create(file, archive_path);
+            try archive.addFiles(allocator, args[arg_index+1..]);
+            try archive.finalize();
+        },
         .display_contents => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
