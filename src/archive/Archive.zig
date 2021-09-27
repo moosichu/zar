@@ -63,13 +63,13 @@ pub const Header = extern struct {
 };
 
 pub const FileSource = enum {
-    Memory, // TODO: remove this?
-    Archive,
-    File,
+    memory, // TODO: remove this?
+    archive,
+    file,
 };
 
 pub const Contents = struct {
-    // Memory representation
+    // memory representation
     bytes: []u8,
 
     file: fs.File,
@@ -79,6 +79,9 @@ pub const Contents = struct {
     pub fn print(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
         try self.file.seekTo(self.seek_pos);
         var reader = self.file.reader();
+
+        // TODO: select a decent default buffer size (and have a way of controlling it?)
+        // probably should be allocated on the heap as well.
         var buffer: [1000]u8 = undefined;
         var total_bytes_read: u64 = 0;
 
@@ -118,11 +121,11 @@ pub fn create(
     };
 }
 
-// BEGIN merged from https://github.com/iddev5/zar
+// BEGIN_MERGE from https://github.com/iddev5/zar
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
-/// Use same naming scheme for objects (as found elsewhere in the file).
 
+/// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
@@ -167,7 +170,7 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
             const object = ArchivedFile{
                 .name = file_name,
                 .contents = Contents{
-                    .file_source = .Memory,
+                    .file_source = .memory,
                     .bytes = data,
                     .file = undefined,
                     .seek_pos = undefined,
@@ -242,7 +245,7 @@ pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
     try self.massOperation(file_names, null, extractOperation);
 }
 
-// END merged from https://github.com/iddev5/zar
+// END_MERGE from https://github.com/iddev5/zar
 
 pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
@@ -419,7 +422,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 .file = reader.context,
                 .seek_pos = try reader.context.getPos(),
                 .length = seek_forward_amount,
-                .file_source = .Archive,
+                .file_source = .archive,
                 .bytes = try allocator.alloc(u8, seek_forward_amount),
             },
         };
