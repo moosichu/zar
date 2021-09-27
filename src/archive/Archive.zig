@@ -163,7 +163,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     
         // Write the string table itself
         {
-            try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
+            if (string_table.items.len != 0)
+                try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
         }
     } else if (self.archive_type == .bsd) {
         for (self.files.items) |file, index| {
