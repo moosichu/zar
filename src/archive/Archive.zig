@@ -167,7 +167,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
 
         // Check against bsd naming properties
-        const starts_with_bsd_name_length = mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
+        const starts_with_bsd_name_length = (trimmed_archive_name.len >= 2) and mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
         const could_be_bsd = starts_with_bsd_name_length;
 
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
@@ -233,12 +233,30 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = string_full[0 .. string_full.len - 1];
         }
 
+        var seek_forward_amount = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10);
+
+        if (starts_with_bsd_name_length) {
+            trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
+            const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
+                try stderr.print("Error parsing bsd-style string length\n", .{});
+                return error.NotArchive;
+            };
+
+            const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
+
+            // TODO: proper error handling and length checking here!
+            _ = try reader.read(archive_name_buffer);
+            seek_forward_amount = seek_forward_amount - archive_name_length;
+
+            trimmed_archive_name = archive_name_buffer;
+        }
+
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
         };
 
         try self.files.append(allocator, parsed_file);
 
-        try reader.context.seekBy(try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10));
+        try reader.context.seekBy(seek_forward_amount);
     }
 }
