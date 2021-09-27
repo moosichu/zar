@@ -119,10 +119,20 @@ pub fn main() anyerror!void {
         .insert => {
             const file = try fs.cwd().createFile(archive_path, .{});
             defer file.close();
-            
+
             var archive = Archive.create(file, archive_path);
-            try archive.addFiles(allocator, args[arg_index+1..]);
+            try archive.addFiles(allocator, args[arg_index + 1 ..]);
             try archive.finalize();
+        },
+        .delete => {
+            const file = try fs.cwd().openFile(archive_path, .{ .write = true });
+            defer file.close();
+
+            var archive = Archive.create(file, archive_path);
+            if (archive.parse(allocator, stderr)) {
+                try archive.deleteFiles(args[arg_index + 1 ..]);
+                try archive.finalize();
+            } else |err| return err;
         },
         .display_contents => {
             const file = try fs.cwd().openFile(archive_path, .{});

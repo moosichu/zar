@@ -71,6 +71,8 @@ pub const ArchivedFile = struct {
     contents: []u8,
 };
 
+const Self = @This();
+
 pub fn create(
     file: fs.File,
     name: []const u8,
@@ -84,7 +86,7 @@ pub fn create(
     };
 }
 
-pub fn finalize(self: *Archive) !void {    
+pub fn finalize(self: *Archive) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
@@ -96,7 +98,7 @@ pub fn finalize(self: *Archive) !void {
         try writer.writeStruct(self.headers.items[index]);
         try writer.writeAll(file.contents);
     }
-    
+
     // Truncate the file size
     try self.file.setEndPos(try self.file.getPos());
 }
@@ -111,7 +113,7 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
             const data = try obj_file.readToEndAlloc(allocator, std.math.maxInt(usize));
             const stat = try obj_file.stat();
 
-            // TODO: check for if the file is larger than 16-1 bytes and add it to string table 
+            // TODO: check for if the file is larger than 16-1 bytes and add it to string table
             const name = try mem.concat(allocator, u8, &.{ file_name, "/" });
             defer allocator.free(name);
 
@@ -127,7 +129,7 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
                 .name = file_name,
                 .contents = data,
             };
-    
+
             // Append header and file contents
             try self.headers.append(allocator, @ptrCast(*Header, &buf).*);
             try self.files.append(allocator, object);
@@ -135,6 +137,65 @@ pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !voi
     }
 }
 
+pub fn deleteFiles(self: *Self, file_names: ?[][]u8) !void {
+    // For the list of given file names, find the entry in self.files
+    // and remove it from both self.headers and self.files.
+    if (file_names) |names| {
+        for (names) |file_name| {
+            for (self.files.items) |file, index| {
+                if (std.mem.eql(u8, file.name, file_name)) {
+                    _ = self.headers.orderedRemove(index);
+                    _ = self.files.orderedRemove(index);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Convenience function for doing mass operations
+const OperationErrorSet = Allocator.Error || std.fmt.ParseIntError;
+fn massOperation(self: *Self, file_names: ?[][]u8, data: anytype, cb: fn (item: ObjectFile, index: usize, data: anytype) OperationErrorSet!void) !void {
+    if (file_names) |names| {
+        for (self.files.items) |file, index| {
+            for (names) |name| {
+                if (std.mem.eql(u8, file.name, name)) {
+                    try cb(item, index, data);
+                    break;
+                }
+            }
+        }
+    } else {
+        for (self.objects.items) |item, index| {
+            try cb(item, index, data);
+        }
+    }
+}
+
+fn printOperation(item: ObjectFile, index: usize, data: anytype) !void {
+    _ = index;
+
+    const writer = data;
+    try writer.print("{s}", .{item.contents});
+}
+
+pub fn print(self: *Self, file_names: ?[][]u8, writer: std.fs.File.Writer) !void {
+    try self.massOperation(file_names, writer, printOperation);
+}
+
+fn extractOperation(item: ArchiveFile, index: usize, data: anytype) !void {
+    _ = index;
+    _ = data;
+
+    const file = try std.fs.cwd().createFile(item.name, .{});
+    defer file.close();
+
+    try file.writeAll(item.contents);
+}
+
+pub fn extract(self: *Self, file_names: ?[][]u8) !void {
+    try self.massOperation(file_names, null, extractOperation);
+}
 
 pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
@@ -304,13 +365,15 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             trimmed_archive_name = archive_name_buffer;
         }
 
+        // const size = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10);
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
-            .contents = undefined,
+            .contents = try allocator.alloc(u8, seek_forward_amount),
         };
 
-        try self.files.append(allocator, parsed_file);
+        // Read file contents
+        try reader.readNoEof(parsed_file.contents);
 
-        try reader.context.seekBy(seek_forward_amount);
+        try self.files.append(allocator, parsed_file);
     }
 }
