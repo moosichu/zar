@@ -42,6 +42,17 @@ fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
     return true;
 }
 
+fn openOrCreateFile(archive_path: []u8) !fs.File {
+    const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            const create_file_handle = try fs.cwd().createFile(archive_path, .{ .read = true });
+            return create_file_handle;
+        },
+        else => return err,
+    };
+    return open_file_handle;
+}
+
 pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -127,7 +138,7 @@ pub fn main() anyerror!void {
 
     switch (operation) {
         .insert => {
-            const file = try fs.cwd().createFile(archive_path, .{});
+            const file = try openOrCreateFile(archive_path);
             defer file.close();
 
             var archive = Archive.create(file, archive_path);
@@ -144,7 +155,7 @@ pub fn main() anyerror!void {
             }
         },
         .delete => {
-            const file = try fs.cwd().openFile(archive_path, .{ .write = true });
+            const file = try openOrCreateFile(archive_path);
             defer file.close();
 
             var archive = Archive.create(file, archive_path);
