@@ -115,14 +115,33 @@ pub fn main() anyerror!void {
 
     const archive_path = args[arg_index];
 
+    arg_index = arg_index + 1;
+
+    const files = file_result: {
+        if (args.len > arg_index) {
+            break :file_result args[arg_index..args.len];
+        }
+        const empty = [_][:0]u8{};
+        break :file_result &empty;
+    };
+
     switch (operation) {
         .insert => {
             const file = try fs.cwd().createFile(archive_path, .{});
             defer file.close();
 
             var archive = Archive.create(file, archive_path);
-            try archive.addFiles(allocator, args[arg_index + 1 ..]);
-            try archive.finalize(allocator);
+            if (archive.parse(allocator, stderr)) {
+                try archive.insertFiles(allocator, files);
+                try archive.finalize(allocator);
+            } else |err| switch (err) {
+                // These are errors we know how to handle
+                error.NotArchive => {
+                    // archive.parse prints appropriate errors for these messages
+                    return;
+                },
+                else => return err,
+            }
         },
         .delete => {
             const file = try fs.cwd().openFile(archive_path, .{ .write = true });
@@ -130,7 +149,7 @@ pub fn main() anyerror!void {
 
             var archive = Archive.create(file, archive_path);
             if (archive.parse(allocator, stderr)) {
-                try archive.deleteFiles(args[arg_index + 1 ..]);
+                try archive.deleteFiles(files);
                 try archive.finalize(allocator);
             } else |err| return err;
         },

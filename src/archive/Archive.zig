@@ -12,12 +12,11 @@ file: fs.File,
 name: []const u8,
 archive_type: ArchiveType,
 
-// These are currently seperate so we can append
-// header values to array seperately and then have
-// the parsed file point to slices into that memory
-// that we know will remain persistent.
-headers: std.ArrayListUnmanaged(Header),
 files: std.ArrayListUnmanaged(ArchivedFile),
+
+// Use it so we can easily lookup files indices when inserting!
+// TODO: A trie is probably a lot better here
+filename_to_index: std.StringArrayHashMapUnmanaged(u64),
 
 pub const ArchiveType = enum {
     ambiguous,
@@ -76,6 +75,7 @@ pub const Contents = struct {
     seek_pos: u64,
     length: u64,
     file_source: FileSource,
+    // mode: u64,
 
     // TODO: dellocation
 
@@ -119,8 +119,8 @@ pub fn create(
         .file = file,
         .name = name,
         .archive_type = .ambiguous,
-        .headers = .{},
         .files = .{},
+        .filename_to_index = .{},
     };
 }
 
@@ -130,14 +130,22 @@ pub fn create(
 
 /// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive, allocator: *Allocator) !void {
+    // TODO: Currently this is a bit of a mine-field - so maybe just reading all the file-contents
+    // into memory is the best bet for now?
+
     // Overwrite all contents
     try self.file.seekTo(0);
 
     const writer = self.file.writer();
     try writer.writeAll(magic_string);
 
-    // TODO: we need support of --format
-    self.archive_type = .gnu;
+    if (self.archive_type == .ambiguous) {
+        // TODO: Set this based on the current platform you are using the tool
+        // on!
+        self.archive_type = .gnu;
+    }
+
+    const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
     // GNU format: Create string table
     if (self.archive_type == .gnu) {
@@ -146,7 +154,6 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
         // Generate the complete string table
         for (self.files.items) |file, index| {
-            var header = &self.headers.items[index];
             const is_the_name_allowed = (file.name.len < 16);
 
             // If the file is small enough to fit in header, then just write it there
@@ -164,7 +171,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             defer allocator.free(name);
 
             // Edit the header
-            _ = try std.fmt.bufPrint(&header.ar_name, "{s: <16}", .{name});
+            _ = try std.fmt.bufPrint(&(header_names[index]), "{s: <16}", .{name});
         }
 
         // Write the string table itself
@@ -175,17 +182,23 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     } else if (self.archive_type == .bsd) {
         // BSD format: Just write the length of the name in header
         for (self.files.items) |file, index| {
-            var header = &self.headers.items[index];
-            if (header.ar_name[0] == '&') {
-                _ = try std.fmt.bufPrint(&header.ar_name, "#1/{: <13}", .{file.name.len});
-            }
+            _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
         }
     }
 
     // Write the files
     for (self.files.items) |file, index| {
-        var header = self.headers.items[index];
-        try writer.writeStruct(header);
+        // Write the header
+        // For now, we just write a garbage value to header.name and resolve it later
+        var headerBuffer: [@sizeOf(Header)]u8 = undefined;
+        _ = try std.fmt.bufPrint(
+            &headerBuffer,
+            "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
+            .{ &header_names[index], 0, 0, 0, 0, file.contents.length },
+        );
+
+        // TODO: handle errors
+        _ = try writer.write(&headerBuffer);
 
         // Write the name of the file in the data section
         if (self.archive_type == .bsd) {
@@ -198,47 +211,13 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try self.file.setEndPos(try self.file.getPos());
 }
 
-pub fn addFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
-    if (file_names) |names| {
-        for (names) |file_name| {
-            // Open the file and read all of its contents
-            const obj_file = try std.fs.cwd().openFile(file_name, .{ .read = true });
-            const stat = try obj_file.stat();
-
-            // Write the header
-            // For now, we just write a garbage value to header.name and resolve it later
-            var buf = [_]u8{0} ** @sizeOf(Header);
-            _ = try std.fmt.bufPrint(
-                &buf,
-                "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-                .{ "&", 0, 0, 0, stat.mode, stat.size },
-            );
-
-            const object = ArchivedFile{
-                .name = file_name,
-                .contents = Contents{
-                    .file_source = .file,
-                    .file = obj_file,
-                    .seek_pos = 0,
-                    .length = stat.size,
-                },
-            };
-
-            // Append header and file contents
-            try self.headers.append(allocator, @ptrCast(*Header, &buf).*);
-            try self.files.append(allocator, object);
-        }
-    }
-}
-
 pub fn deleteFiles(self: *Archive, file_names: ?[][]u8) !void {
     // For the list of given file names, find the entry in self.files
-    // and remove it from both self.headers and self.files.
+    // and remove it from self.files.
     if (file_names) |names| {
         for (names) |file_name| {
             for (self.files.items) |file, index| {
                 if (std.mem.eql(u8, file.name, file_name)) {
-                    _ = self.headers.orderedRemove(index);
                     _ = self.files.orderedRemove(index);
                     break;
                 }
@@ -293,17 +272,53 @@ pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
 
 // END_MERGE from https://github.com/iddev5/zar
 
+pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
+    if (file_names) |names| {
+        for (names) |file_name| {
+            // Open the file and read all of its contents
+            const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
+            const file_stats = try file.stat();
+            const archived_file = ArchivedFile{
+                .name = file_name, // TODO: sort out the file-name with respect to path
+                .contents = Contents{
+                    .file_source = .file,
+                    .file = file,
+                    .seek_pos = 0,
+                    .length = file_stats.size,
+                    // .mode = file_stats.mode,
+                },
+            };
+
+            // A trie-based datastructure would be better for this!
+            const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
+            if (getOrPutResult.found_existing) {
+                const existing_index = getOrPutResult.value_ptr.*;
+                self.files.items[existing_index] = archived_file;
+            } else {
+                getOrPutResult.value_ptr.* = self.files.items.len;
+                try self.files.append(allocator, archived_file);
+            }
+        }
+    }
+}
+
 pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
-        const magic = reader.readBytesNoEof(magic_string.len) catch |err| switch (err) {
-            error.EndOfStream => {
-                try stderr.print("File too short to be an archive\n", .{});
-                return error.NotArchive;
-            },
-            else => |e| return e,
-        };
+        var magic: [magic_string.len]u8 = undefined;
+        const bytes_read = try reader.read(&magic);
+
+        if (bytes_read == 0) {
+            // Archive is empty and that is ok!
+            return;
+        }
+
+        if (bytes_read < magic_string.len) {
+            try stderr.print("File too short to be an archive\n", .{});
+            return error.NotArchive;
+        }
+
         if (!mem.eql(u8, &magic, magic_string)) {
             try stderr.print("Invalid magic string: expected '{s}', found '{s}'\n", .{ magic_string, magic });
             return error.NotArchive;
@@ -360,11 +375,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             else => |e| return e,
         };
 
-        try self.headers.append(allocator, archive_header);
-
         // the lifetime of the archive headers will matched that of the parsed files (for now)
         // so we can take a reference to the strings stored there directly!
-        var trimmed_archive_name = mem.trim(u8, &(self.headers.items[self.headers.items.len - 1].ar_name), " ");
+        var trimmed_archive_name = mem.trim(u8, &archive_header.ar_name, " ");
 
         // Check against gnu naming properties
         const ends_with_gnu_slash = (trimmed_archive_name[trimmed_archive_name.len - 1] == '/');
@@ -445,6 +458,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         var seek_forward_amount = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10);
 
+        // Make sure that these allocations get properly disposed of later!
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
@@ -458,6 +472,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             _ = try reader.read(archive_name_buffer);
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
+            trimmed_archive_name = archive_name_buffer;
+        } else {
+            const archive_name_buffer = try allocator.alloc(u8, trimmed_archive_name.len);
+            mem.copy(u8, archive_name_buffer, trimmed_archive_name);
             trimmed_archive_name = archive_name_buffer;
         }
 
