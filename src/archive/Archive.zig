@@ -68,7 +68,7 @@ pub const Contents = struct {
 
     // TODO: dellocation
 
-    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {    
+    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
         try out_stream.writeAll(self.bytes);
         _ = stderr;
     }
@@ -144,8 +144,10 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
         // Write the string table itself
         {
-            if (string_table.items.len != 0)
+            if (string_table.items.len != 0) {
+                try string_table.appendSlice("\n");
                 try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
+            }
         }
     } else if (self.archive_type == .bsd) {
         // BSD format: Just write the length of the name in header
