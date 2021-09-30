@@ -61,46 +61,15 @@ pub const Header = extern struct {
     ar_fmag: [2]u8,
 };
 
-pub const FileSource = enum {
-    archive,
-    file,
-};
-
-// TODO: file based representation has a problem that when doing delete file operation
-// it is possible that the file contents get replace before it gets written on.
-// This is highly unpredictable and we cannot even guess about which file contents are
-// getting overwritten in which order
 pub const Contents = struct {
-    file: fs.File,
-    seek_pos: u64,
+    bytes: []u8,
     length: u64,
-    file_source: FileSource,
     // mode: u64,
 
     // TODO: dellocation
 
-    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
-        try self.file.seekTo(self.seek_pos);
-        var reader = self.file.reader();
-
-        // TODO: select a decent default buffer size (and have a way of controlling it?)
-        // probably should be allocated on the heap as well.
-        var buffer: [1000]u8 = undefined;
-        var total_bytes_read: u64 = 0;
-
-        while (true) {
-            const bytes_read = try reader.read(buffer[0..std.math.min(buffer.len, self.length - total_bytes_read)]);
-            if (bytes_read == 0) {
-                break;
-            }
-
-            total_bytes_read = total_bytes_read + bytes_read;
-            _ = try out_stream.write(buffer[0..bytes_read]);
-
-            if (total_bytes_read >= self.length) {
-                break;
-            }
-        }
+    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {    
+        try out_stream.writeAll(self.bytes);
         _ = stderr;
     }
 };
@@ -124,7 +93,6 @@ pub fn create(
     };
 }
 
-// BEGIN_MERGE from https://github.com/iddev5/zar
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 
@@ -270,8 +238,6 @@ pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
     try self.massOperation(file_names, null, extractOperation);
 }
 
-// END_MERGE from https://github.com/iddev5/zar
-
 pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
     if (file_names) |names| {
         for (names) |file_name| {
@@ -281,15 +247,14 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !
             const archived_file = ArchivedFile{
                 .name = file_name, // TODO: sort out the file-name with respect to path
                 .contents = Contents{
-                    .file_source = .file,
-                    .file = file,
-                    .seek_pos = 0,
+                    .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                     .length = file_stats.size,
                     // .mode = file_stats.mode,
                 },
             };
 
             // A trie-based datastructure would be better for this!
+            // TODO: Avoid duplication. That would need parse() to use filename_to_index
             const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
             if (getOrPutResult.found_existing) {
                 const existing_index = getOrPutResult.value_ptr.*;
@@ -482,14 +447,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
             .contents = Contents{
-                .file = reader.context,
-                .seek_pos = try reader.context.getPos(),
+                .bytes = try allocator.alloc(u8, seek_forward_amount),
                 .length = seek_forward_amount,
-                .file_source = .archive,
             },
         };
-
+        
+        try reader.readNoEof(parsed_file.contents.bytes);
         try self.files.append(allocator, parsed_file);
-        try reader.context.seekBy(seek_forward_amount);
     }
 }
