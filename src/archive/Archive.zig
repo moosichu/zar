@@ -254,7 +254,6 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !
             };
 
             // A trie-based datastructure would be better for this!
-            // TODO: Avoid duplication. That would need parse() to use filename_to_index
             const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
             if (getOrPutResult.found_existing) {
                 const existing_index = getOrPutResult.value_ptr.*;
@@ -451,8 +450,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 .length = seek_forward_amount,
             },
         };
-        
+
         try reader.readNoEof(parsed_file.contents.bytes);
+
+        try self.filename_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
         try self.files.append(allocator, parsed_file);
     }
 }
