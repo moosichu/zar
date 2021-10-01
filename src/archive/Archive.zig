@@ -21,6 +21,7 @@ filename_to_index: std.StringArrayHashMapUnmanaged(u64),
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
+    gnuthin,
     gnu64,
     bsd,
     darwin64, // darwin_32 *is* bsd
@@ -40,6 +41,7 @@ pub const Operation = enum {
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
+pub const magic_thin = "!<thin>\n";
 
 // GNU constants
 pub const gnu_first_line_buffer_length = 60;
@@ -104,56 +106,59 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
-    const writer = self.file.writer();
-    try writer.writeAll(magic_string);
-
     if (self.archive_type == .ambiguous) {
         // TODO: Set this based on the current platform you are using the tool
         // on!
         self.archive_type = .gnu;
     }
 
+    const writer = self.file.writer();
+    try writer.writeAll(if (self.archive_type == .gnuthin) magic_thin else magic_string);
+
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
-    // GNU format: Create string table
-    if (self.archive_type == .gnu) {
-        var string_table = std.ArrayList(u8).init(allocator);
-        defer string_table.deinit();
+    switch (self.archive_type) {
+        .gnu, .gnuthin, .gnu64 => {
+            // GNU format: Create string table
+            var string_table = std.ArrayList(u8).init(allocator);
+            defer string_table.deinit();
 
-        // Generate the complete string table
-        for (self.files.items) |file, index| {
-            const is_the_name_allowed = (file.name.len < 16);
+            // Generate the complete string table
+            for (self.files.items) |file, index| {
+                const is_the_name_allowed = (file.name.len < 16) and (self.archive_type != .gnuthin);
 
-            // If the file is small enough to fit in header, then just write it there
-            // Otherwise, add it to string table and add a reference to its location
-            const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
-                // Get the position of the file in string table
-                const pos = string_table.items.len;
+                // If the file is small enough to fit in header, then just write it there
+                // Otherwise, add it to string table and add a reference to its location
+                const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
+                    // Get the position of the file in string table
+                    const pos = string_table.items.len;
 
-                // Now add the file name to string table
-                try string_table.appendSlice(file.name);
-                try string_table.appendSlice("/\n");
+                    // Now add the file name to string table
+                    try string_table.appendSlice(file.name);
+                    try string_table.appendSlice("/\n");
 
-                break :blk pos;
-            }});
-            defer allocator.free(name);
+                    break :blk pos;
+                }});
+                defer allocator.free(name);
 
-            // Edit the header
-            _ = try std.fmt.bufPrint(&(header_names[index]), "{s: <16}", .{name});
-        }
-
-        // Write the string table itself
-        {
-            if (string_table.items.len != 0) {
-                try string_table.appendSlice("\n");
-                try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
+                // Edit the header
+                _ = try std.fmt.bufPrint(&(header_names[index]), "{s: <16}", .{name});
             }
-        }
-    } else if (self.archive_type == .bsd) {
-        // BSD format: Just write the length of the name in header
-        for (self.files.items) |file, index| {
-            _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
-        }
+
+            // Write the string table itself
+            {
+                if (string_table.items.len != 0) {
+                    try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
+                }
+            }
+        },
+        .bsd, .darwin64 => {
+            // BSD format: Just write the length of the name in header
+            for (self.files.items) |file, index| {
+                _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
+            }
+        },
+        else => unreachable,
     }
 
     // Write the files
@@ -174,7 +179,9 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         if (self.archive_type == .bsd) {
             try writer.writeAll(file.name);
         }
-        try file.contents.write(writer, null);
+
+        if (self.archive_type != .gnuthin)
+            try file.contents.write(writer, null);
     }
 
     // Truncate the file size
@@ -237,6 +244,11 @@ fn extractOperation(item: ArchivedFile, index: usize, data: anytype) !void {
 }
 
 pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
+    if (self.archive_type == .gnuthin) {
+        // TODO: better error
+        return error.ExtractingFromThin;
+    }
+
     try self.massOperation(file_names, null, extractOperation);
 }
 
