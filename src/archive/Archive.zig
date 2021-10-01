@@ -252,7 +252,7 @@ pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
     try self.massOperation(file_names, null, extractOperation);
 }
 
-pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
+pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]const u8) !void {
     if (file_names) |names| {
         for (names) |file_name| {
             // Open the file and read all of its contents
@@ -471,3 +471,78 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         try self.files.append(allocator, parsed_file);
     }
 }
+
+pub const MRIParser = struct {
+    script: []const u8,
+    archive: ?Archive,
+
+    const Self = @This();
+
+    pub fn init(allocator: *Allocator, file: fs.File) !Self {
+        const self = Self{
+            .script = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
+            .archive = null,
+        };
+
+        return self;
+    }
+
+    fn getOwnedLine(allocator: *Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
+        var list = std.ArrayList([]const u8).init(allocator);
+        while (iter.next()) |item| {
+            try list.append(item);
+        }
+        return list.toOwnedSlice();
+    }
+
+    pub fn execute(self: *Self, allocator: *Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
+        var parser = mem.split(u8, self.script, "\n");
+
+        while (parser.next()) |line| {
+            var line_parser = mem.split(u8, line, " ");
+
+            if (line_parser.next()) |tok| {
+                if (mem.eql(u8, tok, "OPEN")) {
+                    if (self.archive) |_| {
+                        try stderr.print("File currently open\n", .{});
+                        return error.ArchiveAlreadyOccupied;
+                    } else {
+                        const file_name = line_parser.next().?;
+                        const file = try fs.cwd().openFile(file_name, .{ .write = true });
+                        self.archive = Archive.create(file, file_name);
+                        try self.archive.?.parse(allocator, stderr);
+                    }
+                } else if (mem.eql(u8, tok, "LIST")) {
+                    // TODO: verbose output
+                    if (self.archive) |archive| {
+                        for (archive.files.items) |parsed_file| {
+                            try stdout.print("{s}\n", .{parsed_file.name});
+                        }
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
+                    }
+                } else if (mem.eql(u8, tok, "SAVE")) {
+                    if (self.archive) |_| {
+                        try self.archive.?.finalize(allocator);
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
+                    }
+                } else if (mem.eql(u8, tok, "ADDMOD")) {
+                    if (self.archive) |_| {
+                        const file_names = try getOwnedLine(allocator, &line_parser);
+                        defer allocator.free(file_names);
+
+                        try self.archive.?.insertFiles(allocator, file_names);
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
+                    }
+                } else if (mem.eql(u8, tok, "END")) {
+                    return;
+                }
+            }
+        }
+    }
+};
