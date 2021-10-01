@@ -244,6 +244,11 @@ fn extractOperation(item: ArchivedFile, index: usize, data: anytype) !void {
 }
 
 pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
+    if (self.archive_type == .gnuthin) {
+        // TODO: better error
+        return error.ExtractingFromThin;
+    }
+
     try self.massOperation(file_names, null, extractOperation);
 }
 
