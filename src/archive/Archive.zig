@@ -475,6 +475,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 pub const MRIParser = struct {
     script: []const u8,
     archive: ?Archive,
+    file_name: ?[]const u8,
 
     const Self = @This();
 
@@ -510,7 +511,41 @@ pub const MRIParser = struct {
                         const file_name = line_parser.next().?;
                         const file = try fs.cwd().openFile(file_name, .{ .write = true });
                         self.archive = Archive.create(file, file_name);
+                        self.file_name = file_name;
                         try self.archive.?.parse(allocator, stderr);
+                    }
+                } else if (mem.eql(u8, tok, "CREATE")) {
+                    if (self.archive) |_| {
+                        try stderr.print("File currently open\n", .{});
+                        return error.ArchiveAlreadyOccupied;
+                    } else {
+                        const file_name = line_parser.next().?;
+                        const file = try fs.cwd().createFile(file_name, .{ .read = true });
+                        self.archive = Archive.create(file, file_name);
+                        self.file_name = file_name;
+                        try self.archive.?.parse(allocator, stderr);
+                    }
+                } else if (mem.eql(u8, tok, "CREATETHIN")) {
+                    // TODO: Thin archives creation
+                    if (self.archive) |_| {
+                        try stderr.print("File currently open\n", .{});
+                        return error.ArchiveAlreadyOccupied;
+                    } else {
+                        const file_name = line_parser.next().?;
+                        const file = try fs.cwd().createFile(file_name, .{ .read = true });
+                        self.archive = Archive.create(file, file_name);
+                        self.file_name = file_name;
+                        try self.archive.?.parse(allocator, stderr);
+                    }
+                } else if (mem.eql(u8, tok, "ADDMOD")) {
+                    if (self.archive) |_| {
+                        const file_names = try getOwnedLine(allocator, &line_parser);
+                        defer allocator.free(file_names);
+
+                        try self.archive.?.insertFiles(allocator, file_names);
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
                     }
                 } else if (mem.eql(u8, tok, "LIST")) {
                     // TODO: verbose output
@@ -522,6 +557,22 @@ pub const MRIParser = struct {
                         try stderr.print("No current archive\n", .{});
                         return error.NoCurrentArchive;
                     }
+                } else if (mem.eql(u8, tok, "DELETE")) {
+                    if (self.archive) |_| {
+                        const file_names = try getOwnedLine(allocator, &line_parser);
+                        try self.archive.?.deleteFiles(file_names);
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
+                    }
+                } else if (mem.eql(u8, tok, "EXTRACT")) {
+                    if (self.archive) |_| {
+                        const file_names = try getOwnedLine(allocator, &line_parser);
+                        try self.archive.?.extract(file_names);
+                    } else {
+                        try stderr.print("No current archive\n", .{});
+                        return error.NoCurrentArchive;
+                    }
                 } else if (mem.eql(u8, tok, "SAVE")) {
                     if (self.archive) |_| {
                         try self.archive.?.finalize(allocator);
@@ -529,12 +580,11 @@ pub const MRIParser = struct {
                         try stderr.print("No current archive\n", .{});
                         return error.NoCurrentArchive;
                     }
-                } else if (mem.eql(u8, tok, "ADDMOD")) {
+                } else if (mem.eql(u8, tok, "CLEAR")) {
                     if (self.archive) |_| {
-                        const file_names = try getOwnedLine(allocator, &line_parser);
-                        defer allocator.free(file_names);
-
-                        try self.archive.?.insertFiles(allocator, file_names);
+                        const file = try fs.cwd().openFile(self.file_name, .{ .write = true });
+                        self.archive = Archive.create(file, self.file_name);
+                        try self.archive.?.parse(allocator, stderr);
                     } else {
                         try stderr.print("No current archive\n", .{});
                         return error.NoCurrentArchive;
