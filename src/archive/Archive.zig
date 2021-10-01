@@ -188,7 +188,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try self.file.setEndPos(try self.file.getPos());
 }
 
-pub fn deleteFiles(self: *Archive, file_names: ?[][]u8) !void {
+pub fn deleteFiles(self: *Archive, file_names: ?[][]const u8) !void {
     // For the list of given file names, find the entry in self.files
     // and remove it from self.files.
     if (file_names) |names| {
@@ -205,7 +205,7 @@ pub fn deleteFiles(self: *Archive, file_names: ?[][]u8) !void {
 
 // Convenience function for doing mass operations
 const OperationErrorSet = Allocator.Error || std.fmt.ParseIntError;
-fn massOperation(self: *Archive, file_names: ?[][]u8, data: anytype, cb: fn (item: ArchivedFile, index: usize, data: anytype) OperationErrorSet!void) !void {
+fn massOperation(self: *Archive, file_names: ?[][]const u8, data: anytype, cb: fn (item: ArchivedFile, index: usize, data: anytype) OperationErrorSet!void) !void {
     if (file_names) |names| {
         for (self.files.items) |file, index| {
             for (names) |name| {
@@ -216,7 +216,7 @@ fn massOperation(self: *Archive, file_names: ?[][]u8, data: anytype, cb: fn (ite
             }
         }
     } else {
-        for (self.objects.items) |item, index| {
+        for (self.files.items) |item, index| {
             try cb(item, index, data);
         }
     }
@@ -229,7 +229,7 @@ fn printOperation(item: ArchivedFile, index: usize, data: anytype) !void {
     try writer.print("{s}", .{item.contents});
 }
 
-pub fn print(self: *Archive, file_names: ?[][]u8, writer: std.fs.File.Writer) !void {
+pub fn print(self: *Archive, file_names: ?[][]const u8, writer: std.fs.File.Writer) !void {
     try self.massOperation(file_names, writer, printOperation);
 }
 
@@ -240,10 +240,10 @@ fn extractOperation(item: ArchivedFile, index: usize, data: anytype) !void {
     const file = try std.fs.cwd().createFile(item.name, .{});
     defer file.close();
 
-    try file.writeAll(item.contents);
+    try file.writeAll(item.contents.bytes);
 }
 
-pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
+pub fn extract(self: *Archive, file_names: ?[][]const u8) !void {
     if (self.archive_type == .gnuthin) {
         // TODO: better error
         return error.ExtractingFromThin;
