@@ -54,7 +54,7 @@ fn testDislayContents(test_dir_path: []const u8, archive_name: []const u8, file_
 
 test "test suite" {
     var ctx = TestContext.init(std.heap.page_allocator);
-    //simple test: create a new gnu archive and compare the output
+    //simple test: create a new gnu archive and compare the output //doesn't work for now 
     {
        
         
@@ -98,14 +98,9 @@ pub const TestContext = struct {
     };
         
     pub const Case = struct {
-        //struct to describe the file used in the test
-        
-        //capture the output of the program
-        
         name: []const u8, 
         input_files: std.ArrayList(File) = undefined,
         expected_out: Output = undefined,
-        //args: []const u8,
         control: []const u8 = undefined,
         args: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(std.heap.page_allocator),
         
