@@ -145,7 +145,6 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         // Write the string table itself
         {
             if (string_table.items.len != 0) {
-                try string_table.appendSlice("\n");
                 try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
             }
         }
