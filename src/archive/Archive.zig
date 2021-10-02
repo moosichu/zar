@@ -303,48 +303,73 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         }
     }
 
-    // https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5
-    // Process string/symbol tables and/or try to infer archive type!
+    var gnu_symbol_table_contents: []u8 = undefined;
     var string_table_contents: []u8 = undefined;
+    var has_processed_symbol_table = false;
     {
+        // https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5
+        // Process string/symbol tables and/or try to infer archive type!
         var starting_seek_pos = magic_string.len;
+        while (true) {
+            var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
-        var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
+            const has_line_to_process = result: {
+                const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
+                    else => |e| return e,
+                };
 
-        const has_line_to_process = result: {
-            const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
-                else => |e| return e,
-            };
-
-            if (chars_read < first_line_buffer.len) {
-                break :result false;
-            }
-
-            break :result true;
-        };
-
-        if (has_line_to_process) {
-            if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
-                switch (self.archive_type) {
-                    .ambiguous => self.archive_type = .gnu,
-                    .gnu, .gnu64 => {},
-                    else => {
-                        try stderr.print("Came across gnu-style string table in {} archive\n", .{self.archive_type});
-                        return error.NotArchive;
-                    },
+                if (chars_read < first_line_buffer.len) {
+                    break :result false;
                 }
 
-                const table_size_string = first_line_buffer[48..58];
-                const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+                break :result true;
+            };
 
-                string_table_contents = try allocator.alloc(u8, table_size);
-                // TODO: actually error handle not expected number of bytes being read!
-                _ = try reader.read(string_table_contents);
-                starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+            if (has_line_to_process) {
+                if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
+                    switch (self.archive_type) {
+                        .ambiguous => self.archive_type = .gnu,
+                        .gnu, .gnu64 => {},
+                        else => {
+                            try stderr.print("Came across gnu-style string table in {} archive\n", .{self.archive_type});
+                            return error.NotArchive;
+                        },
+                    }
+
+                    const table_size_string = first_line_buffer[48..58];
+                    const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+
+                    string_table_contents = try allocator.alloc(u8, table_size);
+                    // TODO: actually error handle not expected number of bytes being read!
+                    _ = try reader.read(string_table_contents);
+                    // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+                    break;
+                } else if (!has_processed_symbol_table and first_line_buffer[0] == '/') {
+                    has_processed_symbol_table = true;
+                    switch (self.archive_type) {
+                        .ambiguous => self.archive_type = .gnu,
+                        .gnu, .gnu64 => {},
+                        else => {
+                            try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.archive_type});
+                            return error.NotArchive;
+                        },
+                    }
+
+
+                    const table_size_string = first_line_buffer[48..58];
+                    const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+
+                    gnu_symbol_table_contents = try allocator.alloc(u8, table_size);
+                    _ = try reader.read(gnu_symbol_table_contents);
+                    // TODO: actually error handle not expected number of bytes being read!
+
+                    starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+                } else {
+                    try reader.context.seekTo(starting_seek_pos);
+                    break;
+                }
             }
         }
-
-        try reader.context.seekTo(starting_seek_pos);
     }
 
     while (true) {

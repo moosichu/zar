@@ -16,6 +16,11 @@ const test2_gnu_archive = "output_llvm-ar_gnu.a";
 const test2_bsd_archive = "output_llvm-ar_bsd.a";
 const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
 
+const test4_dir = "test/data/test4";
+const test4_gnu_archive = "output_llvm-ar_gnu.a";
+const test4_bsd_archive = "output_llvm-ar_bsd.a";
+const test4_names = [_][]const u8{ "input1.o", "input2.o" };
+
 test "List Files GNU test1" {
     try testFileContents(test1_dir, test1_gnu_archive, test1_names);
 }
@@ -31,6 +36,15 @@ test "List Files GNU test2" {
 test "List Files BSD test2" {
     try testFileContents(test2_dir, test2_bsd_archive, test2_names);
 }
+
+
+test "List Files GNU test4" {
+    try testFileContents(test4_dir, test4_gnu_archive, test4_names);
+}
+
+// test "List Files BSD test2" {
+//     try testFileContents(test2_dir, test2_bsd_archive, test2_names);
+// }
 
 fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_names: anytype) !void {
     const test_dir = try fs.cwd().openDir(test_dir_path, .{});
@@ -62,7 +76,7 @@ fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_na
             if (num_read == 0) {
                 break;
             }
-            try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos..num_read]));
+            try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos..current_start_pos+num_read]));
             current_start_pos = current_start_pos + num_read;
         }
     }
