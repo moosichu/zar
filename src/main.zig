@@ -69,16 +69,33 @@ pub fn main() anyerror!void {
         return;
     }
 
+    var archive_type = Archive.ArchiveType.ambiguous;
+
     // Process Options First
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
         keep_processing_current_option = false;
         var current_arg = args[arg_index];
         {
-            const format_string = "--format=";
-            if (mem.startsWith(u8, current_arg, format_string)) {
+            // TODO: Make sure this arg doesn't show up twice!
+            const format_string_prefix = "--format=";
+            if (mem.startsWith(u8, current_arg, format_string_prefix)) {
                 // TODO: Handle format option!
                 keep_processing_current_option = true;
+
+                const format_string = current_arg[format_string_prefix.len..];
+                if (mem.eql(u8, format_string, "default")) {
+                    // do nothing
+                } else if (mem.eql(u8, format_string, "bsd")) {
+                    archive_type = .bsd;
+                } else if (mem.eql(u8, format_string, "darwin")) {
+                    archive_type = .bsd;
+                } else if (mem.eql(u8, format_string, "gnu")) {
+                    archive_type = .gnu;
+                } else {
+                    // TODO: do an actual error here!
+                    return error.TODO;
+                }
                 arg_index = arg_index + 1;
                 continue;
             }
@@ -182,7 +199,7 @@ pub fn main() anyerror!void {
                 else => return err,
             }
         },
-        .print => {
+        .print_contents => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
