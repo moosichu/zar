@@ -49,6 +49,7 @@ pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_l
 
 // BSD constants
 pub const bsd_name_length_signifier = "#1/";
+pub const bsd_symdef_magic = "__.SYMDEF";
 
 // The format (unparsed) of the archive per-file header
 // NOTE: The reality is more complex than this as different mechanisms
@@ -305,7 +306,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
     var gnu_symbol_table_contents: []u8 = undefined;
     var string_table_contents: []u8 = undefined;
-    var has_processed_symbol_table = false;
+    var has_gnu_symbol_table = false;
     {
         // https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5
         // Process string/symbol tables and/or try to infer archive type!
@@ -344,8 +345,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     _ = try reader.read(string_table_contents);
                     // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
                     break;
-                } else if (!has_processed_symbol_table and first_line_buffer[0] == '/') {
-                    has_processed_symbol_table = true;
+                } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
+                    has_gnu_symbol_table = true;
                     switch (self.archive_type) {
                         .ambiguous => self.archive_type = .gnu,
                         .gnu, .gnu64 => {},
@@ -354,7 +355,6 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                             return error.NotArchive;
                         },
                     }
-
 
                     const table_size_string = first_line_buffer[48..58];
                     const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
@@ -371,6 +371,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             }
         }
     }
+
+    var is_first = true;
 
     while (true) {
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
@@ -390,7 +392,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             gnu_offset_value = try fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
         }
 
-        const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset;
+        const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset or has_gnu_symbol_table;
 
         // Check against bsd naming properties
         const starts_with_bsd_name_length = (trimmed_archive_name.len >= 2) and mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
@@ -468,6 +470,28 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 try stderr.print("Error parsing bsd-style string length\n", .{});
                 return error.NotArchive;
             };
+
+            if (is_first) {
+                // TODO: make sure this does a check on self.archive_type!
+
+                // This could be the symbol table! So parse that here!
+                const current_seek_pos = try reader.context.getPos();
+                var symbol_magic_check_buffer: [bsd_symdef_magic.len]u8 = undefined;
+
+                // TODO: handle not reading enough characters!
+                _ = try reader.read(&symbol_magic_check_buffer);
+                if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
+                    // We have a symbol table!
+                    // TODO: parse symbol table, we just skip it for now...
+                    seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
+                    try reader.context.seekBy(seek_forward_amount);
+                    break;
+                }
+
+                try reader.context.seekTo(current_seek_pos);
+            }
+
+            is_first = false;
 
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 

@@ -42,9 +42,9 @@ test "List Files GNU test4" {
     try testFileContents(test4_dir, test4_gnu_archive, test4_names);
 }
 
-// test "List Files BSD test2" {
-//     try testFileContents(test2_dir, test2_bsd_archive, test2_names);
-// }
+test "List Files BSD test2" {
+    try testFileContents(test2_dir, test2_bsd_archive, test2_names);
+}
 
 fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_names: anytype) !void {
     const test_dir = try fs.cwd().openDir(test_dir_path, .{});
