@@ -502,10 +502,19 @@ pub const MRIParser = struct {
         return self;
     }
 
-    fn getOwnedLine(allocator: *Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
+    fn getToken(iter: *mem.SplitIterator(u8)) ?[]const u8 {
+        while (iter.next()) |tok| {
+            if (mem.startsWith(u8, tok, "*")) break;
+            if (mem.startsWith(u8, tok, ";")) break;
+            return tok;
+        }
+        return null;
+    }
+
+    fn getTokenLine(allocator: *Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
         var list = std.ArrayList([]const u8).init(allocator);
-        while (iter.next()) |item| {
-            try list.append(item);
+        while (getToken(iter)) |tok| {
+            try list.append(tok);
         }
         return list.toOwnedSlice();
     }
@@ -516,7 +525,7 @@ pub const MRIParser = struct {
         while (parser.next()) |line| {
             var line_parser = mem.split(u8, line, " ");
 
-            if (line_parser.next()) |tok| {
+            if (getToken(&line_parser)) |tok| {
                 var command_name = try allocator.dupe(u8, tok);
                 defer allocator.free(command_name);
 
@@ -533,7 +542,7 @@ pub const MRIParser = struct {
                                 return error.ArchiveAlreadyOpen;
                             },
                             .addmod => {
-                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                const file_names = try getTokenLine(allocator, &line_parser);
                                 defer allocator.free(file_names);
 
                                 try self.archive.?.insertFiles(allocator, file_names);
@@ -545,11 +554,11 @@ pub const MRIParser = struct {
                                 }
                             },
                             .delete => {
-                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                const file_names = try getTokenLine(allocator, &line_parser);
                                 try self.archive.?.deleteFiles(file_names);
                             },
                             .extract => {
-                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                const file_names = try getTokenLine(allocator, &line_parser);
                                 try self.archive.?.extract(file_names);
                             },
                             .save => {
@@ -565,7 +574,7 @@ pub const MRIParser = struct {
                     } else {
                         switch (command) {
                             .open => {
-                                const file_name = line_parser.next().?;
+                                const file_name = getToken(&line_parser).?;
                                 const file = try fs.cwd().openFile(file_name, .{ .write = true });
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
@@ -573,7 +582,7 @@ pub const MRIParser = struct {
                             },
                             .create, .createthin => {
                                 // TODO: Thin archives creation
-                                const file_name = line_parser.next().?;
+                                const file_name = getToken(&line_parser).?;
                                 const file = try fs.cwd().createFile(file_name, .{ .read = true });
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
