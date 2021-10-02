@@ -188,7 +188,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try self.file.setEndPos(try self.file.getPos());
 }
 
-pub fn deleteFiles(self: *Archive, file_names: ?[][]u8) !void {
+pub fn deleteFiles(self: *Archive, file_names: ?[][]const u8) !void {
     // For the list of given file names, find the entry in self.files
     // and remove it from self.files.
     if (file_names) |names| {
@@ -205,7 +205,7 @@ pub fn deleteFiles(self: *Archive, file_names: ?[][]u8) !void {
 
 // Convenience function for doing mass operations
 const OperationErrorSet = Allocator.Error || std.fmt.ParseIntError;
-fn massOperation(self: *Archive, file_names: ?[][]u8, data: anytype, cb: fn (item: ArchivedFile, index: usize, data: anytype) OperationErrorSet!void) !void {
+fn massOperation(self: *Archive, file_names: ?[][]const u8, data: anytype, cb: fn (item: ArchivedFile, index: usize, data: anytype) OperationErrorSet!void) !void {
     if (file_names) |names| {
         for (self.files.items) |file, index| {
             for (names) |name| {
@@ -216,7 +216,7 @@ fn massOperation(self: *Archive, file_names: ?[][]u8, data: anytype, cb: fn (ite
             }
         }
     } else {
-        for (self.objects.items) |item, index| {
+        for (self.files.items) |item, index| {
             try cb(item, index, data);
         }
     }
@@ -229,7 +229,7 @@ fn printOperation(item: ArchivedFile, index: usize, data: anytype) !void {
     try writer.print("{s}", .{item.contents});
 }
 
-pub fn print(self: *Archive, file_names: ?[][]u8, writer: std.fs.File.Writer) !void {
+pub fn print(self: *Archive, file_names: ?[][]const u8, writer: std.fs.File.Writer) !void {
     try self.massOperation(file_names, writer, printOperation);
 }
 
@@ -240,10 +240,10 @@ fn extractOperation(item: ArchivedFile, index: usize, data: anytype) !void {
     const file = try std.fs.cwd().createFile(item.name, .{});
     defer file.close();
 
-    try file.writeAll(item.contents);
+    try file.writeAll(item.contents.bytes);
 }
 
-pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
+pub fn extract(self: *Archive, file_names: ?[][]const u8) !void {
     if (self.archive_type == .gnuthin) {
         // TODO: better error
         return error.ExtractingFromThin;
@@ -252,7 +252,7 @@ pub fn extract(self: *Archive, file_names: ?[][]u8) !void {
     try self.massOperation(file_names, null, extractOperation);
 }
 
-pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]u8) !void {
+pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]const u8) !void {
     if (file_names) |names| {
         for (names) |file_name| {
             // Open the file and read all of its contents
@@ -471,3 +471,143 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         try self.files.append(allocator, parsed_file);
     }
 }
+
+pub const MRIParser = struct {
+    script: []const u8,
+    archive: ?Archive,
+    file_name: ?[]const u8,
+
+    const CommandType = enum {
+        open,
+        create,
+        createthin,
+        addmod,
+        list,
+        delete,
+        extract,
+        save,
+        clear,
+        end,
+    };
+
+    const Self = @This();
+
+    pub fn init(allocator: *Allocator, file: fs.File) !Self {
+        const self = Self{
+            .script = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
+            .archive = null,
+            .file_name = null,
+        };
+
+        return self;
+    }
+
+    // Returns the next token
+    fn getToken(iter: *mem.SplitIterator(u8)) ?[]const u8 {
+        while (iter.next()) |tok| {
+            if (mem.startsWith(u8, tok, "*")) break;
+            if (mem.startsWith(u8, tok, ";")) break;
+            return tok;
+        }
+        return null;
+    }
+
+    // Returns a slice of tokens
+    fn getTokenLine(allocator: *Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
+        var list = std.ArrayList([]const u8).init(allocator);
+        while (getToken(iter)) |tok| {
+            try list.append(tok);
+        }
+        return list.toOwnedSlice();
+    }
+
+    pub fn execute(self: *Self, allocator: *Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
+        // Split the file into lines
+        var parser = mem.split(u8, self.script, "\n");
+
+        while (parser.next()) |line| {
+            // Split the line by spaces
+            var line_parser = mem.split(u8, line, " ");
+
+            if (getToken(&line_parser)) |tok| {
+                var command_name = try allocator.dupe(u8, tok);
+                defer allocator.free(command_name);
+
+                _ = std.ascii.lowerString(command_name, tok);
+
+                if (std.meta.stringToEnum(CommandType, command_name)) |command| {
+                    if (self.archive) |archive| {
+                        switch (command) {
+                            .addmod => {
+                                const file_names = try getTokenLine(allocator, &line_parser);
+                                defer allocator.free(file_names);
+
+                                try self.archive.?.insertFiles(allocator, file_names);
+                            },
+                            .list => {
+                                // TODO: verbose output
+                                for (archive.files.items) |parsed_file| {
+                                    try stdout.print("{s}\n", .{parsed_file.name});
+                                }
+                            },
+                            .delete => {
+                                const file_names = try getTokenLine(allocator, &line_parser);
+                                try self.archive.?.deleteFiles(file_names);
+                            },
+                            .extract => {
+                                const file_names = try getTokenLine(allocator, &line_parser);
+                                try self.archive.?.extract(file_names);
+                            },
+                            .save => {
+                                try self.archive.?.finalize(allocator);
+                            },
+                            .clear => {
+                                // This is a bit of a hack but its reliable.
+                                // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
+                                const file = try fs.cwd().openFile(self.file_name.?, .{ .write = true });
+                                self.archive = Archive.create(file, self.file_name.?);
+
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .end => return,
+                            else => {
+                                try stderr.print(
+                                    "Archive `{s}` is currently open.\nThe command `{s}` can only be executed when no current archive is active.\n",
+                                    .{ self.file_name.?, command_name },
+                                );
+                                return error.ArchiveAlreadyOpen;
+                            },
+                        }
+                    } else {
+                        switch (command) {
+                            .open => {
+                                const file_name = getToken(&line_parser).?;
+
+                                const file = try fs.cwd().openFile(file_name, .{ .write = true });
+                                self.archive = Archive.create(file, file_name);
+                                self.file_name = file_name;
+
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .create, .createthin => {
+                                // TODO: Thin archives creation
+                                const file_name = getToken(&line_parser).?;
+
+                                const file = try fs.cwd().createFile(file_name, .{ .read = true });
+                                self.archive = Archive.create(file, file_name);
+                                self.file_name = file_name;
+
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .end => return,
+                            else => {
+                                try stderr.print("No currently active archive found.\nThe command `{s}` can only be executed when there is an opened archive.\n", .{command_name});
+                                return error.NoCurrentArchive;
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+};
