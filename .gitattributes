@@ -1,2 +1,2 @@
 *.zig text eol=lf
-*.a text eol=lf
+*.a -text
