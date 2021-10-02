@@ -354,7 +354,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     has_gnu_symbol_table = true;
                     switch (self.archive_type) {
                         .ambiguous => self.archive_type = .gnu,
-                        .gnu, .gnu64 => {},
+                        .gnu, .gnuthin, .gnu64 => {},
                         else => {
                             try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.archive_type});
                             return error.NotArchive;
