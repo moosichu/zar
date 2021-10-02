@@ -1,2 +1,4 @@
 *.zig text eol=lf
 *.a -text
+*.o -text
+*.txt -text
