@@ -298,8 +298,13 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             return error.NotArchive;
         }
 
-        if (!mem.eql(u8, &magic, magic_string)) {
-            try stderr.print("Invalid magic string: expected '{s}', found '{s}'\n", .{ magic_string, magic });
+        const is_thin_archive = mem.eql(u8, &magic, magic_thin);
+
+        if (is_thin_archive)
+            self.archive_type = .gnuthin;
+
+        if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
+            try stderr.print("Invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
             return error.NotArchive;
         }
     }
@@ -330,7 +335,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
                     switch (self.archive_type) {
                         .ambiguous => self.archive_type = .gnu,
-                        .gnu, .gnu64 => {},
+                        .gnu, .gnuthin, .gnu64 => {},
                         else => {
                             try stderr.print("Came across gnu-style string table in {} archive\n", .{self.archive_type});
                             return error.NotArchive;
@@ -409,7 +414,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     return error.TODO;
                 }
             },
-            .gnu, .gnu64 => {
+            .gnu, .gnuthin, .gnu64 => {
                 if (!must_be_gnu) {
                     try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
                     return error.BadArchive;
@@ -517,7 +522,14 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
         };
 
-        try reader.readNoEof(parsed_file.contents.bytes);
+        if (self.archive_type == .gnuthin) {
+            var thin_file = try std.fs.cwd().openFile(trimmed_archive_name, .{});
+            defer thin_file.close();
+
+            try thin_file.reader().readNoEof(parsed_file.contents.bytes);
+        } else {
+            try reader.readNoEof(parsed_file.contents.bytes);
+        }
 
         try self.filename_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
         try self.files.append(allocator, parsed_file);
