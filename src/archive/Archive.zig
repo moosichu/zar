@@ -32,10 +32,10 @@ pub const Operation = enum {
     insert,
     delete,
     move,
-    print,
+    print_contents,
     quick_append,
     ranlib,
-    display_contents,
+    print_names,
     extract,
 };
 

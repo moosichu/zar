@@ -18,10 +18,10 @@ const overview =
     \\ r - replace/insert [files] in <archive> (NOTE: c modifier allows for archive creation)
     \\ d - delete [files] from <archive>
     \\ m - move [files] in <archive>
-    \\ p - print [files] in <archive>
+    \\ p - print contents of files in <archive>
     \\ q - quick append [files] to <archive>
     \\ s - act as ranlib
-    \\ t - display contents of <archive>
+    \\ t - display filenames in <archive>
     \\ x - extract [files] from <archive>
     \\
     \\Modifiers:
@@ -100,10 +100,10 @@ pub fn main() anyerror!void {
             'r' => break :operation Archive.Operation.insert,
             'd' => break :operation Archive.Operation.delete,
             'm' => break :operation Archive.Operation.move,
-            'p' => break :operation Archive.Operation.print,
+            'p' => break :operation Archive.Operation.print_contents,
             'w' => break :operation Archive.Operation.quick_append,
             's' => break :operation Archive.Operation.ranlib,
-            't' => break :operation Archive.Operation.display_contents,
+            't' => break :operation Archive.Operation.print_names,
             'x' => break :operation Archive.Operation.extract,
             else => {
                 try printError(stderr, "a valid operation must be provided");
@@ -164,7 +164,7 @@ pub fn main() anyerror!void {
                 try archive.finalize(allocator);
             } else |err| return err;
         },
-        .display_contents => {
+        .print_names => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
