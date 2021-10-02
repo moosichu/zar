@@ -450,7 +450,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             _ = try reader.read(archive_name_buffer);
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
-            trimmed_archive_name = archive_name_buffer;
+            // strip null characters from name - TODO find documentation on this
+            // could not find documentation on this being needed, but some archivers
+            // seems to insert these (for alignment reasons?)
+            trimmed_archive_name = mem.trim(u8, archive_name_buffer, "\x00");
         } else {
             const archive_name_buffer = try allocator.alloc(u8, trimmed_archive_name.len);
             mem.copy(u8, archive_name_buffer, trimmed_archive_name);

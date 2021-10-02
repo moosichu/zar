@@ -20,17 +20,17 @@ test "List Files GNU test1" {
     try testDislayContents(test1_dir, test1_gnu_archive, test1_names);
 }
 
-// test "List Files BSD test1" {
-//     try testDislayContents(test1_dir, test1_bsd_archive, test1_names);
-// }
+test "List Files BSD test1" {
+    try testDislayContents(test1_dir, test1_bsd_archive, test1_names);
+}
 
 test "List Files GNU test2" {
     try testDislayContents(test2_dir, test2_gnu_archive, test2_names);
 }
 
-// test "List Files BSD test2" {
-//     try testDislayContents(test2_dir, test2_bsd_archive, test2_names);
-// }
+test "List Files BSD test2" {
+    try testDislayContents(test2_dir, test2_bsd_archive, test2_names);
+}
 
 fn testDislayContents(test_dir_path: []const u8, archive_name: []const u8, file_names: anytype) !void {
     const test_dir = try fs.cwd().openDir(test_dir_path, .{});
