@@ -517,96 +517,75 @@ pub const MRIParser = struct {
             var line_parser = mem.split(u8, line, " ");
 
             if (line_parser.next()) |tok| {
-                var cmd = try allocator.dupe(u8, tok);
-                defer allocator.free(cmd);
+                var command_name = try allocator.dupe(u8, tok);
+                defer allocator.free(command_name);
 
-                _ = std.ascii.lowerString(cmd, tok);
+                _ = std.ascii.lowerString(command_name, tok);
 
-                switch (std.meta.stringToEnum(CommandType, cmd).?) {
-                    .open => {
-                        if (self.archive) |_| {
-                            try stderr.print("File currently open\n", .{});
-                            return error.ArchiveAlreadyOccupied;
-                        } else {
-                            const file_name = line_parser.next().?;
-                            const file = try fs.cwd().openFile(file_name, .{ .write = true });
-                            self.archive = Archive.create(file, file_name);
-                            self.file_name = file_name;
-                            try self.archive.?.parse(allocator, stderr);
-                        }
-                    },
-                    .create, .createthin => {
-                        // TODO: Thin archives creation
-                        if (self.archive) |_| {
-                            try stderr.print("File currently open\n", .{});
-                            return error.ArchiveAlreadyOccupied;
-                        } else {
-                            const file_name = line_parser.next().?;
-                            const file = try fs.cwd().createFile(file_name, .{ .read = true });
-                            self.archive = Archive.create(file, file_name);
-                            self.file_name = file_name;
-                            try self.archive.?.parse(allocator, stderr);
-                        }
-                    },
-                    .addmod => {
-                        if (self.archive) |_| {
-                            const file_names = try getOwnedLine(allocator, &line_parser);
-                            defer allocator.free(file_names);
+                if (std.meta.stringToEnum(CommandType, command_name)) |command| {
+                    if (self.archive) |archive| {
+                        switch (command) {
+                            .open, .create, .createthin => {
+                                try stderr.print(
+                                    "Archive `{s}` is currently open.\nThe command `{s}` can only be executed when no current archive is active.\n",
+                                    .{ self.file_name.?, command_name },
+                                );
+                                return error.ArchiveAlreadyOpen;
+                            },
+                            .addmod => {
+                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                defer allocator.free(file_names);
 
-                            try self.archive.?.insertFiles(allocator, file_names);
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
+                                try self.archive.?.insertFiles(allocator, file_names);
+                            },
+                            .list => {
+                                // TODO: verbose output
+                                for (archive.files.items) |parsed_file| {
+                                    try stdout.print("{s}\n", .{parsed_file.name});
+                                }
+                            },
+                            .delete => {
+                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                try self.archive.?.deleteFiles(file_names);
+                            },
+                            .extract => {
+                                const file_names = try getOwnedLine(allocator, &line_parser);
+                                try self.archive.?.extract(file_names);
+                            },
+                            .save => {
+                                try self.archive.?.finalize(allocator);
+                            },
+                            .clear => {
+                                const file = try fs.cwd().openFile(self.file_name.?, .{ .write = true });
+                                self.archive = Archive.create(file, self.file_name.?);
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .end => return,
                         }
-                    },
-                    .list => {
-                        // TODO: verbose output
-                        if (self.archive) |archive| {
-                            for (archive.files.items) |parsed_file| {
-                                try stdout.print("{s}\n", .{parsed_file.name});
-                            }
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
+                    } else {
+                        switch (command) {
+                            .open => {
+                                const file_name = line_parser.next().?;
+                                const file = try fs.cwd().openFile(file_name, .{ .write = true });
+                                self.archive = Archive.create(file, file_name);
+                                self.file_name = file_name;
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .create, .createthin => {
+                                // TODO: Thin archives creation
+                                const file_name = line_parser.next().?;
+                                const file = try fs.cwd().createFile(file_name, .{ .read = true });
+                                self.archive = Archive.create(file, file_name);
+                                self.file_name = file_name;
+                                try self.archive.?.parse(allocator, stderr);
+                            },
+                            .end => return,
+                            else => {
+                                try stderr.print("No currently active archive found.\nThe command `{s}` can only be executed when there is an opened archive.\n", .{command_name});
+                                return error.NoCurrentArchive;
+                            },
                         }
-                    },
-                    .delete => {
-                        if (self.archive) |_| {
-                            const file_names = try getOwnedLine(allocator, &line_parser);
-                            try self.archive.?.deleteFiles(file_names);
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
-                        }
-                    },
-                    .extract => {
-                        if (self.archive) |_| {
-                            const file_names = try getOwnedLine(allocator, &line_parser);
-                            try self.archive.?.extract(file_names);
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
-                        }
-                    },
-                    .save => {
-                        if (self.archive) |_| {
-                            try self.archive.?.finalize(allocator);
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
-                        }
-                    },
-                    .clear => {
-                        if (self.archive) |_| {
-                            const file = try fs.cwd().openFile(self.file_name.?, .{ .write = true });
-                            self.archive = Archive.create(file, self.file_name.?);
-                            try self.archive.?.parse(allocator, stderr);
-                        } else {
-                            try stderr.print("No current archive\n", .{});
-                            return error.NoCurrentArchive;
-                        }
-                    },
-                    .end => return,
+                    }
                 }
             }
         }
