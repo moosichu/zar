@@ -12,7 +12,8 @@ const overview =
     \\Usage: zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
     \\
     \\Options:
-    \\ TODO!
+    \\ --format=<type>
+    \\      Can be default, gnu, darwin or bsd. This determines the format used to serialise an archive, this is ignored when parsing archives as type there is always inferred. When creating an archive the host machine is used to infer <type> if one is not specified.
     \\
     \\Operations:
     \\ r - replace/insert [files] in <archive> (NOTE: c modifier allows for archive creation)
@@ -158,7 +159,7 @@ pub fn main() anyerror!void {
             const file = try openOrCreateFile(archive_path);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path);
+            var archive = Archive.create(file, archive_path, archive_type);
             if (archive.parse(allocator, stderr)) {
                 try archive.insertFiles(allocator, files);
                 try archive.finalize(allocator);
@@ -175,7 +176,7 @@ pub fn main() anyerror!void {
             const file = try openOrCreateFile(archive_path);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path);
+            var archive = Archive.create(file, archive_path, archive_type);
             if (archive.parse(allocator, stderr)) {
                 try archive.deleteFiles(files);
                 try archive.finalize(allocator);
@@ -185,7 +186,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path);
+            var archive = Archive.create(file, archive_path, archive_type);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try stdout.print("{s}\n", .{parsed_file.name});
@@ -203,7 +204,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path);
+            var archive = Archive.create(file, archive_path, archive_type);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try parsed_file.contents.write(stdout, stderr);

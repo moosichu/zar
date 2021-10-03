@@ -10,7 +10,13 @@ const Allocator = std.mem.Allocator;
 
 file: fs.File,
 name: []const u8,
-archive_type: ArchiveType,
+
+// We need to differentiate between inferred and output archive type, as other ar
+// programs "just handle" any valid archive for parsing, regarldess of what a
+// user has specified - the user specification should only matter for writing
+// archives.
+inferred_archive_type: ArchiveType,
+output_archive_type: ArchiveType,
 
 files: std.ArrayListUnmanaged(ArchivedFile),
 
@@ -86,11 +92,13 @@ pub const ArchivedFile = struct {
 pub fn create(
     file: fs.File,
     name: []const u8,
+    output_archive_type: ArchiveType,
 ) Archive {
     return Archive{
         .file = file,
         .name = name,
-        .archive_type = .ambiguous,
+        .inferred_archive_type = .ambiguous,
+        .output_archive_type = output_archive_type,
         .files = .{},
         .filename_to_index = .{},
     };
@@ -104,18 +112,26 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
-    if (self.archive_type == .ambiguous) {
+    if (self.output_archive_type == .ambiguous) {
+        // Set output archive type of one we might just have parsed...
+        self.output_archive_type = self.inferred_archive_type;
+    }
+
+    if (self.output_archive_type == .ambiguous) {
+        // if output archive type is still ambiguous (none was inferred, and
+        // none was set) then we need to infer it from the host platform!s
+
         // TODO: Set this based on the current platform you are using the tool
         // on!
-        self.archive_type = .gnu;
+        self.output_archive_type = .gnu;
     }
 
     const writer = self.file.writer();
-    try writer.writeAll(if (self.archive_type == .gnuthin) magic_thin else magic_string);
+    try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
-    switch (self.archive_type) {
+    switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
             var string_table = std.ArrayList(u8).init(allocator);
@@ -123,7 +139,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
             // Generate the complete string table
             for (self.files.items) |file, index| {
-                const is_the_name_allowed = (file.name.len < 16) and (self.archive_type != .gnuthin);
+                const is_the_name_allowed = (file.name.len < 16) and (self.output_archive_type != .gnuthin);
 
                 // If the file is small enough to fit in header, then just write it there
                 // Otherwise, add it to string table and add a reference to its location
@@ -174,11 +190,11 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try writer.write(&headerBuffer);
 
         // Write the name of the file in the data section
-        if (self.archive_type == .bsd) {
+        if (self.output_archive_type == .bsd) {
             try writer.writeAll(file.name);
         }
 
-        if (self.archive_type != .gnuthin)
+        if (self.output_archive_type != .gnuthin)
             try file.contents.write(writer, null);
     }
 
@@ -200,7 +216,7 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
 }
 
 pub fn extract(self: *Archive, file_names: [][]const u8) !void {
-    if (self.archive_type == .gnuthin) {
+    if (self.inferred_archive_type == .gnuthin) {
         // TODO: better error
         return error.ExtractingFromThin;
     }
@@ -264,7 +280,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         const is_thin_archive = mem.eql(u8, &magic, magic_thin);
 
         if (is_thin_archive)
-            self.archive_type = .gnuthin;
+            self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
             try stderr.print("Invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
@@ -296,11 +312,11 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
             if (has_line_to_process) {
                 if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
-                    switch (self.archive_type) {
-                        .ambiguous => self.archive_type = .gnu,
+                    switch (self.inferred_archive_type) {
+                        .ambiguous => self.inferred_archive_type = .gnu,
                         .gnu, .gnuthin, .gnu64 => {},
                         else => {
-                            try stderr.print("Came across gnu-style string table in {} archive\n", .{self.archive_type});
+                            try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
                             return error.NotArchive;
                         },
                     }
@@ -315,11 +331,11 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     break;
                 } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
                     has_gnu_symbol_table = true;
-                    switch (self.archive_type) {
-                        .ambiguous => self.archive_type = .gnu,
+                    switch (self.inferred_archive_type) {
+                        .ambiguous => self.inferred_archive_type = .gnu,
                         .gnu, .gnuthin, .gnu64 => {},
                         else => {
-                            try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.archive_type});
+                            try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
                             return error.NotArchive;
                         },
                     }
@@ -367,12 +383,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         const could_be_bsd = starts_with_bsd_name_length;
 
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
-        switch (self.archive_type) {
+        switch (self.inferred_archive_type) {
             .ambiguous => {
                 if (must_be_gnu) {
-                    self.archive_type = .gnu;
+                    self.inferred_archive_type = .gnu;
                 } else if (could_be_bsd) {
-                    self.archive_type = .bsd;
+                    self.inferred_archive_type = .bsd;
                 } else {
                     return error.TODO;
                 }
@@ -440,7 +456,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             };
 
             if (is_first) {
-                // TODO: make sure this does a check on self.archive_type!
+                // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
                 const current_seek_pos = try reader.context.getPos();
@@ -485,7 +501,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
         };
 
-        if (self.archive_type == .gnuthin) {
+        if (self.inferred_archive_type == .gnuthin) {
             var thin_file = try std.fs.cwd().openFile(trimmed_archive_name, .{});
             defer thin_file.close();
 

@@ -59,7 +59,7 @@ fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_na
     // TODO: pass through custom writer so we can check outputs on error tests
     const stderr = io.getStdErr().writer();
 
-    var archive = Archive.create(archive_file, archive_name);
+    var archive = Archive.create(archive_file, archive_name, Archive.ArchiveType.ambiguous);
     try archive.parse(allocator, stderr);
 
     var memory_buffer = try allocator.alloc(u8, 1024 * 1024);
