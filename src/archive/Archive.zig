@@ -311,7 +311,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             };
 
             if (has_line_to_process) {
-                if (mem.eql(u8, first_line_buffer[0..1], "//"[0..1])) {
+                if (mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
                     switch (self.inferred_archive_type) {
                         .ambiguous => self.inferred_archive_type = .gnu,
                         .gnu, .gnuthin, .gnu64 => {},
