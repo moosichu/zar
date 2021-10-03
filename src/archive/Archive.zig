@@ -101,9 +101,6 @@ pub fn create(
 
 /// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive, allocator: *Allocator) !void {
-    // TODO: Currently this is a bit of a mine-field - so maybe just reading all the file-contents
-    // into memory is the best bet for now?
-
     // Overwrite all contents
     try self.file.seekTo(0);
 
@@ -189,94 +186,60 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try self.file.setEndPos(try self.file.getPos());
 }
 
-pub fn deleteFiles(self: *Archive, file_names: ?[][]const u8) !void {
+pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
     // For the list of given file names, find the entry in self.files
     // and remove it from self.files.
-    if (file_names) |names| {
-        for (names) |file_name| {
-            for (self.files.items) |file, index| {
-                if (std.mem.eql(u8, file.name, file_name)) {
-                    _ = self.files.orderedRemove(index);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-// Convenience function for doing mass operations
-const OperationErrorSet = Allocator.Error || std.fmt.ParseIntError;
-fn massOperation(self: *Archive, file_names: ?[][]const u8, data: anytype, cb: fn (item: ArchivedFile, index: usize, data: anytype) OperationErrorSet!void) !void {
-    if (file_names) |names| {
+    for (file_names) |file_name| {
         for (self.files.items) |file, index| {
-            for (names) |name| {
-                if (std.mem.eql(u8, file.name, name)) {
-                    try cb(file, index, data);
-                    break;
-                }
+            if (std.mem.eql(u8, file.name, file_name)) {
+                _ = self.files.orderedRemove(index);
+                break;
             }
-        }
-    } else {
-        for (self.files.items) |item, index| {
-            try cb(item, index, data);
         }
     }
 }
 
-fn printOperation(item: ArchivedFile, index: usize, data: anytype) !void {
-    _ = index;
-
-    const writer = data;
-    try writer.print("{s}", .{item.contents});
-}
-
-pub fn print(self: *Archive, file_names: ?[][]const u8, writer: std.fs.File.Writer) !void {
-    try self.massOperation(file_names, writer, printOperation);
-}
-
-fn extractOperation(item: ArchivedFile, index: usize, data: anytype) !void {
-    _ = index;
-    _ = data;
-
-    const file = try std.fs.cwd().createFile(item.name, .{});
-    defer file.close();
-
-    try file.writeAll(item.contents.bytes);
-}
-
-pub fn extract(self: *Archive, file_names: ?[][]const u8) !void {
+pub fn extract(self: *Archive, file_names: [][]const u8) !void {
     if (self.archive_type == .gnuthin) {
         // TODO: better error
         return error.ExtractingFromThin;
     }
 
-    try self.massOperation(file_names, null, extractOperation);
+    for (self.files.items) |archived_file| {
+        for (file_names) |file_name| {
+            if (std.mem.eql(u8, archived_file.name, file_name)) {
+                const file = try std.fs.cwd().createFile(archived_file.name, .{});
+                defer file.close();
+
+                try file.writeAll(archived_file.contents.bytes);
+                break;
+            }
+        }
+    }
 }
 
-pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: ?[][]const u8) !void {
-    if (file_names) |names| {
-        for (names) |file_name| {
-            // Open the file and read all of its contents
-            const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
-            const file_stats = try file.stat();
-            const archived_file = ArchivedFile{
-                .name = file_name, // TODO: sort out the file-name with respect to path
-                .contents = Contents{
-                    .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
-                    .length = file_stats.size,
-                    // .mode = file_stats.mode,
-                },
-            };
+pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const u8) !void {
+    for (file_names) |file_name| {
+        // Open the file and read all of its contents
+        const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
+        const file_stats = try file.stat();
+        const archived_file = ArchivedFile{
+            .name = file_name, // TODO: sort out the file-name with respect to path
+            .contents = Contents{
+                .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
+                .length = file_stats.size,
+                // .mode = file_stats.mode,
+            },
+        };
 
-            // A trie-based datastructure would be better for this!
-            const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
-            if (getOrPutResult.found_existing) {
-                const existing_index = getOrPutResult.value_ptr.*;
-                self.files.items[existing_index] = archived_file;
-            } else {
-                getOrPutResult.value_ptr.* = self.files.items.len;
-                try self.files.append(allocator, archived_file);
-            }
+        // A trie-based datastructure would be better for this!
+        const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
+        if (getOrPutResult.found_existing) {
+            const existing_index = getOrPutResult.value_ptr.*;
+            self.files.items[existing_index] = archived_file;
+        } else {
+            getOrPutResult.value_ptr.* = self.files.items.len;
+            try self.files.append(allocator, archived_file);
         }
     }
 }
@@ -606,7 +569,7 @@ pub const MRIParser = struct {
                                 const file_names = try getTokenLine(allocator, &line_parser);
                                 defer allocator.free(file_names);
 
-                                try self.archive.?.insertFiles(allocator, file_names);
+                                try self.archive.insertFiles(allocator, file_names);
                             },
                             .list => {
                                 // TODO: verbose output
@@ -616,14 +579,14 @@ pub const MRIParser = struct {
                             },
                             .delete => {
                                 const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archive.?.deleteFiles(file_names);
+                                try self.archive.deleteFiles(file_names);
                             },
                             .extract => {
                                 const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archive.?.extract(file_names);
+                                try self.archives.extract(file_names);
                             },
                             .save => {
-                                try self.archive.?.finalize(allocator);
+                                try self.archive.finalize(allocator);
                             },
                             .clear => {
                                 // This is a bit of a hack but its reliable.
