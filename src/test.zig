@@ -37,7 +37,6 @@ test "List Files BSD test2" {
     try testFileContents(test2_dir, test2_bsd_archive, test2_names);
 }
 
-
 test "List Files GNU test4" {
     try testFileContents(test4_dir, test4_gnu_archive, test4_names);
 }
@@ -70,13 +69,13 @@ fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_na
 
         const reader = file.reader();
 
-        var current_start_pos : u64 = 0;
+        var current_start_pos: u64 = 0;
         while (true) {
             const num_read = try reader.read(memory_buffer);
             if (num_read == 0) {
                 break;
             }
-            try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos..current_start_pos+num_read]));
+            try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read]));
             current_start_pos = current_start_pos + num_read;
         }
     }

@@ -345,6 +345,15 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                     gnu_symbol_table_contents = try allocator.alloc(u8, table_size);
                     _ = try reader.read(gnu_symbol_table_contents);
+
+                    // TODO: Calculate number of entries in symbol table
+
+                    // TODO: Create an array that is that size
+
+                    // TODO: Put all the strings in that array
+
+                    // TODO: Print them?
+
                     // TODO: actually error handle not expected number of bytes being read!
 
                     starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
