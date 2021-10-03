@@ -569,7 +569,7 @@ pub const MRIParser = struct {
                                 const file_names = try getTokenLine(allocator, &line_parser);
                                 defer allocator.free(file_names);
 
-                                try self.archive.insertFiles(allocator, file_names);
+                                try self.archive.?.insertFiles(allocator, file_names);
                             },
                             .list => {
                                 // TODO: verbose output
@@ -579,14 +579,14 @@ pub const MRIParser = struct {
                             },
                             .delete => {
                                 const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archive.deleteFiles(file_names);
+                                try self.archive.?.deleteFiles(file_names);
                             },
                             .extract => {
                                 const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archives.extract(file_names);
+                                try self.archive.?.extract(file_names);
                             },
                             .save => {
-                                try self.archive.finalize(allocator);
+                                try self.archive.?.finalize(allocator);
                             },
                             .clear => {
                                 // This is a bit of a hack but its reliable.
