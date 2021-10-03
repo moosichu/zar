@@ -14,6 +14,13 @@ const overview =
     \\Options:
     \\ --format=<type>
     \\      Can be default, gnu, darwin or bsd. This determines the format used to serialise an archive, this is ignored when parsing archives as type there is always inferred. When creating an archive the host machine is used to infer <type> if one is not specified.
+    \\ --version
+    \\      Print program version details and exit
+    \\ -h, --help
+    \\      Print (this) help text and exit
+    \\
+    \\Ignored for compatability:
+    \\ --plugin=<string>
     \\
     \\Operations:
     \\ r - replace/insert [files] in <archive> (NOTE: c modifier allows for archive creation)
@@ -27,6 +34,17 @@ const overview =
     \\
     \\Modifiers:
     \\ TODO!
+    \\
+;
+
+const version = "0.0.0";
+
+const version_details =
+    \\zar (https://github.com/moosichu/zar):
+    \\  zar version {s}
+    \\  {s} build
+    \\  default archive type: {s}
+    \\  host: {s}-{s}-{s}
     \\
 ;
 
@@ -66,20 +84,25 @@ pub fn main() anyerror!void {
     const stderr = io.getStdErr().writer();
 
     var arg_index: u32 = 1;
-    if (!try checkArgsBounds(stderr, args, arg_index)) {
-        return;
-    }
 
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Process Options First
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
+        if (!try checkArgsBounds(stderr, args, arg_index)) {
+            return;
+        }
+
         keep_processing_current_option = false;
         var current_arg = args[arg_index];
         {
-            // TODO: Make sure this arg doesn't show up twice!
+            // TODO: Make sure an arg doesn't show up twice!
             const format_string_prefix = "--format=";
+            const plugin_string_prefix = "--plugin=";
+            const help_string = "--help";
+            const help_shortcut = "-h";
+            const version_string = "--version";
             if (mem.startsWith(u8, current_arg, format_string_prefix)) {
                 // TODO: Handle format option!
                 keep_processing_current_option = true;
@@ -99,6 +122,19 @@ pub fn main() anyerror!void {
                 }
                 arg_index = arg_index + 1;
                 continue;
+            } else if (mem.startsWith(u8, current_arg, plugin_string_prefix)) {
+                keep_processing_current_option = true;
+                arg_index = arg_index + 1;
+                continue;
+            } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
+                try stdout.print(overview, .{});
+                return;
+            } else if (mem.eql(u8, current_arg, version_string)) {
+                // TODO: calculate build, archive type & host!
+                const target = std.builtin.target;
+                const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
+                try stdout.print(version_details, .{ version, @tagName(std.builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
+                return;
             }
         }
     }

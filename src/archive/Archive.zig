@@ -89,6 +89,12 @@ pub const ArchivedFile = struct {
     contents: Contents,
 };
 
+pub fn getDefaultArchiveTypeFromHost() ArchiveType {
+    // TODO: Set this based on the current platform you are using the tool
+    // on!
+    return .gnu;
+}
+
 pub fn create(
     file: fs.File,
     name: []const u8,
@@ -119,11 +125,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     if (self.output_archive_type == .ambiguous) {
         // if output archive type is still ambiguous (none was inferred, and
-        // none was set) then we need to infer it from the host platform!s
-
-        // TODO: Set this based on the current platform you are using the tool
-        // on!
-        self.output_archive_type = .gnu;
+        // none was set) then we need to infer it from the host platform!
+        self.output_archive_type = getDefaultArchiveTypeFromHost();
     }
 
     const writer = self.file.writer();
