@@ -15,9 +15,9 @@ const overview =
     \\ --format=<type>
     \\      Can be default, gnu, darwin or bsd. This determines the format used to serialise an archive, this is ignored when parsing archives as type there is always inferred. When creating an archive the host machine is used to infer <type> if one is not specified.
     \\ --version
-    \\      Print program version details and exit
+    \\      Print program version details and exit.
     \\ -h, --help
-    \\      Print (this) help text and exit
+    \\      Print (this) help text and exit.
     \\
     \\Ignored for compatability:
     \\ --plugin=<string>
