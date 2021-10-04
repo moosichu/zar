@@ -481,7 +481,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     // TODO: parse symbol table, we just skip it for now...
                     seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
                     try reader.context.seekBy(seek_forward_amount);
-                    break;
+                    continue;
                 }
 
                 try reader.context.seekTo(current_seek_pos);
