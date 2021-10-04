@@ -147,6 +147,11 @@ pub fn main() anyerror!void {
         // the operation may start with a hyphen - so slice it!
         var arg_slice = args[arg_index][0..args[arg_index].len];
         if (arg_slice[0] == '-') {
+            if (arg_slice.len == 1) {
+                try printError(stderr, "a valid operation must be provided - only hyphen found");
+                return;
+            }
+
             arg_slice = arg_slice[1..arg_slice.len];
         }
 
