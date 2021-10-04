@@ -45,6 +45,12 @@ pub const Operation = enum {
     extract,
 };
 
+pub const Modifier = enum {
+    none,
+    create, // disables creation warning
+    zero_timestamp,
+};
+
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
 pub const magic_thin = "!<thin>\n";

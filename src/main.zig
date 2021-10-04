@@ -143,14 +143,19 @@ pub fn main() anyerror!void {
         return;
     }
 
-    // Process Operation!
-    const operation = operation: {
+    const operation_slice = slice: {
         // the operation may start with a hyphen - so slice it!
         var arg_slice = args[arg_index][0..args[arg_index].len];
         if (arg_slice[0] == '-') {
             arg_slice = arg_slice[1..arg_slice.len];
         }
-        switch (arg_slice[0]) {
+
+        break :slice arg_slice;
+    };
+
+    // Process Operation
+    const operation = operation: {
+        switch (operation_slice[0]) {
             'r' => break :operation Archive.Operation.insert,
             'd' => break :operation Archive.Operation.delete,
             'm' => break :operation Archive.Operation.move,
@@ -164,9 +169,20 @@ pub fn main() anyerror!void {
                 return;
             },
         }
-
-        // TODO: Process modifiers!
     };
+
+    // TODO: Actually process these modifiers - this parsing is currently
+    // still proof-of-concept
+    const modifiers = try allocator.alloc(Archive.Modifier, operation_slice.len - 1);
+    if (operation_slice.len > 1) {
+        const modifier_slice = operation_slice[1..];
+        for (modifier_slice) |modifier_char, modifier_index| {
+            switch (modifier_char) {
+                'c' => modifiers[modifier_index] = .create,
+                else => modifiers[modifier_index] = .none,
+            }
+        }
+    }
 
     arg_index = arg_index + 1;
 
