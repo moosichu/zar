@@ -249,7 +249,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
         const file_stats = try file.stat();
         const archived_file = ArchivedFile{
-            .name = file_name, // TODO: sort out the file-name with respect to path
+            .name = fs.path.basename(file_name),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
