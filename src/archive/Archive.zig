@@ -253,7 +253,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
-                .mode = file_stats.mode,
+                .mode = file_stats.mode & ~@as(u64, std.os.S.IFREG),
             },
         };
 
