@@ -143,6 +143,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
+            var string_table_entries: usize = 0;
             var string_table = std.ArrayList(u8).init(allocator);
             defer string_table.deinit();
 
@@ -160,6 +161,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     try string_table.appendSlice(file.name);
                     try string_table.appendSlice("/\n");
 
+                    string_table_entries += 1;
+
                     break :blk pos;
                 }});
                 defer allocator.free(name);
@@ -171,6 +174,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the string table itself
             {
                 if (string_table.items.len != 0) {
+                    if (string_table_entries == 1)
+                        try string_table.append('\n');
                     try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
                 }
             }
