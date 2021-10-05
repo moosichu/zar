@@ -1,5 +1,6 @@
 const Archive = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
 const fmt = std.fmt;
 const fs = std.fs;
@@ -79,7 +80,7 @@ pub const Header = extern struct {
 pub const Contents = struct {
     bytes: []u8,
     length: u64,
-    // mode: u64,
+    mode: u64,
 
     // TODO: dellocation
 
@@ -143,6 +144,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
+            var string_table_entries: usize = 0;
             var string_table = std.ArrayList(u8).init(allocator);
             defer string_table.deinit();
 
@@ -160,6 +162,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     try string_table.appendSlice(file.name);
                     try string_table.appendSlice("/\n");
 
+                    string_table_entries += 1;
+
                     break :blk pos;
                 }});
                 defer allocator.free(name);
@@ -171,6 +175,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the string table itself
             {
                 if (string_table.items.len != 0) {
+                    if (string_table_entries == 1)
+                        try string_table.append('\n');
                     try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
                 }
             }
@@ -192,7 +198,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try std.fmt.bufPrint(
             &headerBuffer,
             "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-            .{ &header_names[index], 0, 0, 0, 0, file.contents.length },
+            .{ &header_names[index], 0, 0, 0, file.contents.mode, file.contents.length },
         );
 
         // TODO: handle errors
@@ -249,11 +255,11 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
         const file_stats = try file.stat();
         const archived_file = ArchivedFile{
-            .name = file_name, // TODO: sort out the file-name with respect to path
+            .name = fs.path.basename(file_name),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
-                // .mode = file_stats.mode,
+                .mode = if (builtin.os.tag != .windows) file_stats.mode & ~@as(u64, std.os.S.IFREG) else 0,
             },
         };
 
@@ -516,6 +522,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             .contents = Contents{
                 .bytes = try allocator.alloc(u8, seek_forward_amount),
                 .length = seek_forward_amount,
+                .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10),
             },
         };
 
