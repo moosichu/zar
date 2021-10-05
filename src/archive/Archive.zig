@@ -79,7 +79,7 @@ pub const Header = extern struct {
 pub const Contents = struct {
     bytes: []u8,
     length: u64,
-    // mode: u64,
+    mode: u64,
 
     // TODO: dellocation
 
@@ -192,7 +192,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try std.fmt.bufPrint(
             &headerBuffer,
             "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-            .{ &header_names[index], 0, 0, 0, 0, file.contents.length },
+            .{ &header_names[index], 0, 0, 0, file.contents.mode, file.contents.length },
         );
 
         // TODO: handle errors
@@ -253,7 +253,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
-                // .mode = file_stats.mode,
+                .mode = file_stats.mode,
             },
         };
 
@@ -516,6 +516,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             .contents = Contents{
                 .bytes = try allocator.alloc(u8, seek_forward_amount),
                 .length = seek_forward_amount,
+                .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10),
             },
         };
 
