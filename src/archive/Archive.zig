@@ -1,5 +1,6 @@
 const Archive = @This();
 
+const builtin = @import("builtin");
 const std = @import("std");
 const fmt = std.fmt;
 const fs = std.fs;
@@ -258,7 +259,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
-                .mode = file_stats.mode & ~@as(u64, std.os.S.IFREG),
+                .mode = if (builtin.os.tag != .windows) file_stats.mode & ~@as(u64, std.os.S.IFREG) else 0,
             },
         };
 
