@@ -227,7 +227,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             {
                 if (symbol_table.items.len != 0) {
                     if (symbol_table.items.len % 2 != 0)
-                        try symbol_table.append('\n');
+                        try symbol_table.append(0);
 
                     try writer.print("/{s}{: <10}`\n", .{ " " ** 47, symbol_table.items.len + (symbol_offset.items.len * 4) + 4 });
                     try writer.writeIntBig(u32, symbol_count);
