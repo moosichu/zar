@@ -233,47 +233,37 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
                     const format = self.output_archive_type;
 
-                    if (format == .gnu64) {
-                        try writer.print(Header.format_string, .{
-                            "/SYM64/",
-                            0,
-                            0,
-                            0,
-                            0,
-                            symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64),
-                        });
+                    const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
+                    const symbol_table_size = symbol_table.items.len + (symbol_offset.items.len * int_size) + int_size;
 
+                    try writer.print(Header.format_string, .{
+                        allocator.dupe(u8, if (format == .gnu64) "/SYM64/" else "/"),
+                        0,
+                        0,
+                        0,
+                        0,
+                        symbol_table_size,
+                    });
+
+                    if (format == .gnu64) {
                         try writer.writeIntBig(u64, symbol_count);
                     } else {
-                        try writer.print(Header.format_string, .{
-                            "/",
-                            0,
-                            0,
-                            0,
-                            0,
-                            symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u32)) + @sizeOf(u32),
-                        });
-
                         try writer.writeIntBig(u32, symbol_count);
                     }
 
-                    // zig fmt: off
                     for (symbol_offset.items) |off| {
-                        if (format == .gnu64) {
-                            const local_offset =
-                                @sizeOf(Header) + symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64) + // Size of symbol table itself
-                                if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+                        // zig fmt: off
+                        const local_offset =
+                            @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
+                            if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+                        // zig fmt: on
 
+                        if (format == .gnu64) {
                             try writer.writeIntBig(u64, off + @intCast(u64, local_offset));
                         } else {
-                            const local_offset =
-                                @sizeOf(Header) + symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64) + // Size of symbol table itself
-                                if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
-
                             try writer.writeIntBig(u32, off + @intCast(u32, local_offset));
                         }
                     }
-                    // zig fmt: on
 
                     try writer.writeAll(symbol_table.items);
                 }
