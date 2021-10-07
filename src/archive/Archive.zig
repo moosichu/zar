@@ -231,22 +231,49 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     if (symbol_table.items.len % 2 != 0)
                         try symbol_table.append(0);
 
-                    try writer.print(
-                        Header.format_string,
-                        .{ "/", 0, 0, 0, 0, symbol_table.items.len + (symbol_offset.items.len * 4) + 4 },
-                    );
+                    const format = self.output_archive_type;
 
-                    try writer.writeIntBig(u32, symbol_count);
+                    if (format == .gnu64) {
+                        try writer.print(Header.format_string, .{
+                            "/SYM64/",
+                            0,
+                            0,
+                            0,
+                            0,
+                            symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64),
+                        });
 
-                    for (symbol_offset.items) |off| {
-                        // zig fmt: off
-                        const local_offset = 
-                            @sizeOf(Header) + symbol_table.items.len + (symbol_offset.items.len * 4) + 4 + // Size of symbol table itself
-                            if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
-                        // zig fmt: on
+                        try writer.writeIntBig(u64, symbol_count);
+                    } else {
+                        try writer.print(Header.format_string, .{
+                            "/",
+                            0,
+                            0,
+                            0,
+                            0,
+                            symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u32)) + @sizeOf(u32),
+                        });
 
-                        try writer.writeIntBig(u32, off + @intCast(u32, local_offset));
+                        try writer.writeIntBig(u32, symbol_count);
                     }
+
+                    // zig fmt: off
+                    for (symbol_offset.items) |off| {
+                        if (format == .gnu64) {
+                            const local_offset =
+                                @sizeOf(Header) + symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64) + // Size of symbol table itself
+                                if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+
+                            try writer.writeIntBig(u64, off + @intCast(u64, local_offset));
+                        } else {
+                            const local_offset =
+                                @sizeOf(Header) + symbol_table.items.len + (symbol_offset.items.len * @sizeOf(u64)) + @sizeOf(u64) + // Size of symbol table itself
+                                if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+
+                            try writer.writeIntBig(u32, off + @intCast(u32, local_offset));
+                        }
+                    }
+                    // zig fmt: on
 
                     try writer.writeAll(symbol_table.items);
                 }
