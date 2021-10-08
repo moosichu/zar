@@ -288,7 +288,16 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 if (symbol_table.items.len % 2 != 0)
                     try symbol_table.append(0);
 
-                const symbol_table_size = 12 + @sizeOf(u32) + symbol_count * (@sizeOf(u32) * 2) + @sizeOf(u32) + symbol_table.items.len;
+                const format = self.output_archive_type;
+                const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
+
+                const ranlib_size = symbol_count * (int_size * 2);
+                const symbol_table_size =
+                    12 + // Size of name
+                    int_size + // Int describing the size of ranlib
+                    ranlib_size + // Size of ranlib structs
+                    int_size + // Int describing size of symbol table's strings
+                    symbol_table.items.len; // The lengths of strings themselves
 
                 try writer.print(Header.format_string, .{
                     "#1/12",
@@ -301,16 +310,32 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
                 const endian = builtin.cpu.arch.endian();
 
-                try writer.writeAll("__.SYMDEF\x00\x00\x00");
-                try writer.writeInt(u32, symbol_count * (@sizeOf(u32) * 2), endian);
+                if (format == .darwin64) {
+                    try writer.writeAll("__.SYMDEF_64");
+                    try writer.writeInt(u64, @intCast(u64, ranlib_size), endian);
+                } else {
+                    try writer.writeAll("__.SYMDEF\x00\x00\x00");
+                    try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
+                }
 
                 for (symbol_string_offset.items) |off, i| {
                     const local_offset = @sizeOf(Header) + symbol_table_size;
-                    try writer.writeInt(u32, off, endian);
-                    try writer.writeInt(u32, @intCast(u32, local_offset + symbol_offset.items[i]), endian);
+                    const solved_offset = local_offset + symbol_offset.items[i];
+
+                    if (format == .darwin64) {
+                        try writer.writeInt(u64, off, endian);
+                        try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
+                    } else {
+                        try writer.writeInt(u32, off, endian);
+                        try writer.writeInt(u32, @intCast(u32, solved_offset), endian);
+                    }
+                }
+                if (format == .darwin64) {
+                    try writer.writeInt(u64, @intCast(u64, symbol_table.items.len), endian);
+                } else {
+                    try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
                 }
 
-                try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
                 try writer.writeAll(symbol_table.items);
             }
 
