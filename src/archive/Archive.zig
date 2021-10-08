@@ -322,6 +322,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         else => unreachable,
     }
 
+    const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
+
     // Write the files
     for (self.files.items) |file, index| {
         // Write the header
@@ -330,7 +332,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try std.fmt.bufPrint(
             &headerBuffer,
             Header.format_string,
-            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length },
+            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length + if (is_bsd) file.name.len else 0 },
         );
 
         // TODO: handle errors
