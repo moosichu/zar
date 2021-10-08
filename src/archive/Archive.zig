@@ -175,30 +175,34 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
+    // Create common symbol table information
+    var symbol_count: u32 = 0;
+    var symbol_table = std.ArrayList(u8).init(allocator);
+    var symbol_offset = std.ArrayList(u32).init(allocator);
+    var symbol_string_offset = std.ArrayList(u32).init(allocator);
+    defer symbol_table.deinit();
+    defer symbol_offset.deinit();
+    defer symbol_string_offset.deinit();
+
+    // Calculate the offset of symbols independent of string table and symbol table itself.
+    // It is basically magic size + file offset from position 0
+    var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
+    for (self.files.items) |file| {
+        for (file.symbols.items) |symbol| {
+            try symbol_string_offset.append(@intCast(u32, symbol_table.items.len));
+
+            try symbol_table.appendSlice(symbol);
+            try symbol_table.append(0);
+
+            try symbol_offset.append(offset);
+
+            symbol_count += 1;
+        }
+        offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+    }
+
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
-            // GNU format: Create symbol table
-            var symbol_count: u32 = 0;
-            var symbol_table = std.ArrayList(u8).init(allocator);
-            var symbol_offset = std.ArrayList(u32).init(allocator);
-            defer symbol_table.deinit();
-            defer symbol_offset.deinit();
-
-            // Calculate the offset of symbols independent of string table and symbol table itself.
-            // It is basically magic size + file offset from position 0
-            var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
-            for (self.files.items) |file| {
-                for (file.symbols.items) |symbol| {
-                    try symbol_table.appendSlice(symbol);
-                    try symbol_table.append(0);
-
-                    try symbol_offset.append(offset);
-
-                    symbol_count += 1;
-                }
-                offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
-            }
-
             // GNU format: Create string table
             var string_table = std.ArrayList(u8).init(allocator);
             defer string_table.deinit();
@@ -279,6 +283,37 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             }
         },
         .bsd, .darwin64 => {
+            // BSD format: Write the symbol table
+            if (symbol_table.items.len != 0) {
+                if (symbol_table.items.len % 2 != 0)
+                    try symbol_table.append(0);
+
+                const symbol_table_size = 12 + @sizeOf(u32) + symbol_count * (@sizeOf(u32) * 2) + @sizeOf(u32) + symbol_table.items.len;
+
+                try writer.print(Header.format_string, .{
+                    "#1/12",
+                    0,
+                    0,
+                    0,
+                    0,
+                    symbol_table_size,
+                });
+
+                const endian = builtin.cpu.arch.endian();
+
+                try writer.writeAll("__.SYMDEF\x00\x00\x00");
+                try writer.writeInt(u32, symbol_count * (@sizeOf(u32) * 2), endian);
+
+                for (symbol_string_offset.items) |off, i| {
+                    const local_offset = @sizeOf(Header) + symbol_table_size;
+                    try writer.writeInt(u32, off, endian);
+                    try writer.writeInt(u32, @intCast(u32, local_offset + symbol_offset.items[i]), endian);
+                }
+
+                try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
+                try writer.writeAll(symbol_table.items);
+            }
+
             // BSD format: Just write the length of the name in header
             for (self.files.items) |file, index| {
                 _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
