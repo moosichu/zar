@@ -469,21 +469,26 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         };
 
         try file.seekTo(0);
+        
+        // TODO: Need a better way to predetermine the object type
+        var is_elf = true;
 
         var elf_file = Elf{ .file = file, .name = file_name };
         defer elf_file.deinit(allocator);
 
         elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
-            error.NotObject => return,
+            error.NotObject => is_elf = false,
             else => |e| return e,
         };
 
-        for (elf_file.symtab.items) |sym| {
-            switch (sym.st_info >> 4) {
-                elf.STB_WEAK, elf.STB_GLOBAL => {
-                    try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
-                },
-                else => {},
+        if (is_elf) {
+            for (elf_file.symtab.items) |sym| {
+                switch (sym.st_info >> 4) {
+                    elf.STB_WEAK, elf.STB_GLOBAL => {
+                        try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
+                    },
+                    else => {},
+                }
             }
         }
 
