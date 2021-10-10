@@ -34,7 +34,10 @@ const overview =
     \\ x - extract [files] from <archive>.
     \\
     \\Modifiers:
-    \\ c - Disable arhive creation warning if inserting files to new archive.
+    \\ c - Disable archive creation warning if inserting files to new archive.
+    \\ u - Only update archive contents if [files] have more recent timestamps than it.
+    \\
+    \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
 ;
 
@@ -186,6 +189,8 @@ pub fn main() anyerror!void {
         for (modifier_slice) |modifier_char| {
             switch (modifier_char) {
                 'c' => modifiers.create = true,
+                'u' => modifiers.update_only = true,
+                // TODO: should we print warning with unknown modifier?
                 else => {},
             }
         }
@@ -218,7 +223,7 @@ pub fn main() anyerror!void {
             const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 try archive.insertFiles(allocator, files);
                 try archive.finalize(allocator);
@@ -235,7 +240,7 @@ pub fn main() anyerror!void {
             const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 try archive.deleteFiles(files);
                 try archive.finalize(allocator);
@@ -245,7 +250,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try stdout.print("{s}\n", .{parsed_file.name});
@@ -263,7 +268,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try parsed_file.contents.write(stdout, stderr);

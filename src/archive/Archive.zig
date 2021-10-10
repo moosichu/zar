@@ -27,6 +27,8 @@ filename_to_index: std.StringArrayHashMapUnmanaged(u64),
 
 modifiers: Modifiers,
 
+stat: fs.File.Stat,
+
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
@@ -76,6 +78,8 @@ pub const Header = extern struct {
 pub const Modifiers = extern struct {
     // Supress warning for file creation
     create: bool = false,
+    // Only insert files with more recent timestamps than archive
+    update_only: bool = false,
 };
 
 pub const Contents = struct {
@@ -108,7 +112,7 @@ pub fn create(
     name: []const u8,
     output_archive_type: ArchiveType,
     modifiers: Modifiers,
-) Archive {
+) !Archive {
     return Archive{
         .file = file,
         .name = name,
@@ -117,6 +121,7 @@ pub fn create(
         .files = .{},
         .filename_to_index = .{},
         .modifiers = modifiers,
+        .stat = try file.stat(),
     };
 }
 
@@ -253,7 +258,14 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     for (file_names) |file_name| {
         // Open the file and read all of its contents
         const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
+        defer file.close();
         const file_stats = try file.stat();
+        if (self.modifiers.update_only) {
+            // TODO: Write a test that checks for this functionality still working!
+            if (self.stat.mtime >= file_stats.mtime) {
+                continue;
+            }
+        }
         const archived_file = ArchivedFile{
             .name = fs.path.basename(file_name),
             .contents = Contents{
