@@ -469,19 +469,21 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         };
 
         try file.seekTo(0);
-        
-        // TODO: Need a better way to predetermine the object type
-        var is_elf = true;
 
-        var elf_file = Elf{ .file = file, .name = file_name };
-        defer elf_file.deinit(allocator);
+        var magic: [4]u8 = undefined;
+        _ = try file.reader().read(&magic);
 
-        elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
-            error.NotObject => is_elf = false,
-            else => |e| return e,
-        };
+        try file.seekTo(0);
 
-        if (is_elf) {
+        if (mem.eql(u8, magic[0..], "\x7fELF")) {
+            var elf_file = Elf{ .file = file, .name = file_name };
+            defer elf_file.deinit(allocator);
+
+            elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                error.NotObject => return,
+                else => |e| return e,
+            };
+
             for (elf_file.symtab.items) |sym| {
                 switch (sym.st_info >> 4) {
                     elf.STB_WEAK, elf.STB_GLOBAL => {
