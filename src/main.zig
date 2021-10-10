@@ -24,17 +24,17 @@ const overview =
     \\ --plugin=<string>
     \\
     \\Operations:
-    \\ r - replace/insert [files] in <archive> (NOTE: c modifier allows for archive creation)
-    \\ d - delete [files] from <archive>
-    \\ m - move [files] in <archive>
-    \\ p - print contents of files in <archive>
-    \\ q - quick append [files] to <archive>
-    \\ s - act as ranlib
-    \\ t - display filenames in <archive>
-    \\ x - extract [files] from <archive>
+    \\ r - replace/insert [files] in <archive>, create archive if it does not exist.
+    \\ d - delete [files] from <archive>.
+    \\ m - move [files] in <archive>.
+    \\ p - print contents of files in <archive>.
+    \\ q - quick append [files] to <archive>.
+    \\ s - act as ranlib.
+    \\ t - display filenames in <archive>.
+    \\ x - extract [files] from <archive>.
     \\
     \\Modifiers:
-    \\ TODO!
+    \\ c - Disable arhive creation warning if inserting files to new archive.
     \\
 ;
 
@@ -62,9 +62,12 @@ fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
     return true;
 }
 
-fn openOrCreateFile(archive_path: []u8) !fs.File {
+fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_warning: bool) !fs.File {
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
+            if (print_creation_warning) {
+                try stderr.print("Warning: creating new archive as none exists at path provided\n", .{});
+            }
             const create_file_handle = try fs.cwd().createFile(archive_path, .{ .read = true });
             return create_file_handle;
         },
@@ -177,15 +180,13 @@ pub fn main() anyerror!void {
         }
     };
 
-    // TODO: Actually process these modifiers - this parsing is currently
-    // still proof-of-concept
-    const modifiers = try allocator.alloc(Archive.Modifier, operation_slice.len - 1);
+    var modifiers: Archive.Modifiers = .{};
     if (operation_slice.len > 1) {
         const modifier_slice = operation_slice[1..];
-        for (modifier_slice) |modifier_char, modifier_index| {
+        for (modifier_slice) |modifier_char| {
             switch (modifier_char) {
-                'c' => modifiers[modifier_index] = .create,
-                else => modifiers[modifier_index] = .none,
+                'c' => modifiers.create = true,
+                else => {},
             }
         }
     }
@@ -214,10 +215,10 @@ pub fn main() anyerror!void {
 
     switch (operation) {
         .insert => {
-            const file = try openOrCreateFile(archive_path);
+            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type);
+            var archive = Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 try archive.insertFiles(allocator, files);
                 try archive.finalize(allocator);
@@ -231,10 +232,10 @@ pub fn main() anyerror!void {
             }
         },
         .delete => {
-            const file = try openOrCreateFile(archive_path);
+            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type);
+            var archive = Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 try archive.deleteFiles(files);
                 try archive.finalize(allocator);
@@ -244,7 +245,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type);
+            var archive = Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try stdout.print("{s}\n", .{parsed_file.name});
@@ -262,7 +263,7 @@ pub fn main() anyerror!void {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
-            var archive = Archive.create(file, archive_path, archive_type);
+            var archive = Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try parsed_file.contents.write(stdout, stderr);

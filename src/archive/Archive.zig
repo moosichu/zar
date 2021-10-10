@@ -25,6 +25,8 @@ files: std.ArrayListUnmanaged(ArchivedFile),
 // TODO: A trie is probably a lot better here
 filename_to_index: std.StringArrayHashMapUnmanaged(u64),
 
+modifiers: Modifiers,
+
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
@@ -44,12 +46,6 @@ pub const Operation = enum {
     ranlib,
     print_names,
     extract,
-};
-
-pub const Modifier = enum {
-    none,
-    create, // disables creation warning
-    zero_timestamp,
 };
 
 // All archive files start with this magic string
@@ -75,6 +71,11 @@ pub const Header = extern struct {
     ar_mode: [8]u8,
     ar_size: [10]u8,
     ar_fmag: [2]u8,
+};
+
+pub const Modifiers = extern struct {
+    // Supress warning for file creation
+    create: bool = false,
 };
 
 pub const Contents = struct {
@@ -106,6 +107,7 @@ pub fn create(
     file: fs.File,
     name: []const u8,
     output_archive_type: ArchiveType,
+    modifiers: Modifiers,
 ) Archive {
     return Archive{
         .file = file,
@@ -114,6 +116,7 @@ pub fn create(
         .output_archive_type = output_archive_type,
         .files = .{},
         .filename_to_index = .{},
+        .modifiers = modifiers,
     };
 }
 
