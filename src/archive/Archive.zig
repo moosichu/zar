@@ -8,6 +8,8 @@ const mem = std.mem;
 const log = std.log.scoped(.archive);
 const elf = std.elf;
 const Elf = @import("../link/Elf/Object.zig");
+const MachO = @import("../link/MachO/Object.zig");
+const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
 
@@ -490,6 +492,20 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                         try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
                     },
                     else => {},
+                }
+            }
+        } else if (mem.eql(u8, magic[0..], "\xCF\xFA\xED\xFE")) {
+            var macho_file = MachO{ .file = file, .name = file_name };
+            defer macho_file.deinit(allocator);
+
+            macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                error.NotObject => return,
+                else => |e| return e,
+            };
+
+            for (macho_file.symtab.items) |sym| {
+                if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
+                    try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
                 }
             }
         }
