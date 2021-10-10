@@ -36,6 +36,8 @@ const overview =
     \\Modifiers:
     \\ c - Disable archive creation warning if inserting files to new archive.
     \\ u - Only update archive contents if [files] have more recent timestamps than it.
+    \\ D - Use zero for timestamps, GIDs and UIDs in archived files (enabled by default).
+    \\ U - Use real timestamps, GIDS and UIDs for archived files.
     \\
     \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
@@ -190,6 +192,8 @@ pub fn main() anyerror!void {
             switch (modifier_char) {
                 'c' => modifiers.create = true,
                 'u' => modifiers.update_only = true,
+                'U' => modifiers.use_real_timestamps_and_ids = true,
+                'D' => modifiers.use_real_timestamps_and_ids = false,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }

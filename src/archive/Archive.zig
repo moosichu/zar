@@ -80,12 +80,16 @@ pub const Modifiers = extern struct {
     create: bool = false,
     // Only insert files with more recent timestamps than archive
     update_only: bool = false,
+    use_real_timestamps_and_ids: bool = false,
 };
 
 pub const Contents = struct {
     bytes: []u8,
     length: u64,
     mode: u64,
+    timestamp: u128, // file modified time
+    uid: u32,
+    gid: u32,
 
     // TODO: dellocation
 
@@ -203,7 +207,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try std.fmt.bufPrint(
             &headerBuffer,
             "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-            .{ &header_names[index], 0, 0, 0, file.contents.mode, file.contents.length },
+            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length },
         );
 
         // TODO: handle errors
@@ -266,12 +270,28 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                 continue;
             }
         }
+
+        // convert timestamp from ns to s
+        const timestamp = if (self.modifiers.use_real_timestamps_and_ids) @intCast(u128, @divFloor(file_stats.mtime, 1000_000_000)) else 0;
+
+        // TODO: Get file uid and gid, to do this:
+        // Linux:
+        // - https://man7.org/linux/man-pages/man2/statx.2.html
+        //   https://github.com/ziglang/zig/blob/master/lib/std/os/linux.zig
+        // Darwin:
+        // - https://github.com/ziglang/zig/blob/master/lib/std/c/darwin.zig
+        const gid: u32 = 0;
+        const uid: u32 = 0;
+
         const archived_file = ArchivedFile{
             .name = fs.path.basename(file_name),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = file_stats.size,
                 .mode = if (builtin.os.tag != .windows) file_stats.mode & ~@as(u64, std.os.S.IFREG) else 0,
+                .timestamp = timestamp,
+                .gid = gid,
+                .uid = uid,
             },
         };
 
@@ -414,6 +434,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
         const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset or has_gnu_symbol_table;
 
+        // TODO: if modifiers.use_real_timestamps_and_ids is disabled, do we ignore this from existing archive?
+        // Check against llvm ar
+        const timestamp = try fmt.parseInt(u128, mem.trim(u8, &archive_header.ar_date, " "), 10);
+        const uid = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_uid, " "), 10);
+        const gid = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_gid, " "), 10);
+
         // Check against bsd naming properties
         const starts_with_bsd_name_length = (trimmed_archive_name.len >= 2) and mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
         const could_be_bsd = starts_with_bsd_name_length;
@@ -535,6 +561,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 .bytes = try allocator.alloc(u8, seek_forward_amount),
                 .length = seek_forward_amount,
                 .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10),
+                .timestamp = timestamp,
+                .uid = uid,
+                .gid = gid,
             },
         };
 
