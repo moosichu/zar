@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
@@ -131,9 +132,9 @@ pub fn main() anyerror!void {
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
                 // TODO: calculate build, archive type & host!
-                const target = std.builtin.target;
+                const target = builtin.target;
                 const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
-                try stdout.print(version_details, .{ version, @tagName(std.builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
+                try stdout.print(version_details, .{ version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
                 return;
             }
         }
