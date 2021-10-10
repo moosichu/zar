@@ -494,18 +494,22 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                     else => {},
                 }
             }
-        } else if (mem.eql(u8, magic[0..], "\xCF\xFA\xED\xFE")) {
-            var macho_file = MachO{ .file = file, .name = file_name };
-            defer macho_file.deinit(allocator);
+        } else {
+            const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
-            macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
-                error.NotObject => return,
-                else => |e| return e,
-            };
+            if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+                var macho_file = MachO{ .file = file, .name = file_name };
+                defer macho_file.deinit(allocator);
 
-            for (macho_file.symtab.items) |sym| {
-                if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
-                    try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
+                macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                    error.NotObject => return,
+                    else => |e| return e,
+                };
+
+                for (macho_file.symtab.items) |sym| {
+                    if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
+                        try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
+                    }
                 }
             }
         }
