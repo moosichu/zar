@@ -264,24 +264,32 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
         defer file.close();
         const file_stats = try file.stat();
+
+        var gid: u32 = 0;
+        var uid: u32 = 0;
+        var timestamp: u128 = 0;
+
+        if (self.modifiers.use_real_timestamps_and_ids) {
+            // FIXME: Currently windows doesnt support the Stat struct
+            if (builtin.os.tag == .windows) {
+                // Convert timestamp from ns to s
+                timestamp = @intCast(u128, @divFloor(file_stats.mtime, 1000_000_000));
+            } else {
+                var stat: std.c.Stat = undefined;
+                _ = std.c.fstat(file.handle, &stat);
+
+                gid = stat.gid;
+                uid = stat.uid;
+                timestamp = @intCast(u128, stat.mtime().tv_sec);
+            }
+        }
+
         if (self.modifiers.update_only) {
             // TODO: Write a test that checks for this functionality still working!
             if (self.stat.mtime >= file_stats.mtime) {
                 continue;
             }
         }
-
-        // convert timestamp from ns to s
-        const timestamp = if (self.modifiers.use_real_timestamps_and_ids) @intCast(u128, @divFloor(file_stats.mtime, 1000_000_000)) else 0;
-
-        // TODO: Get file uid and gid, to do this:
-        // Linux:
-        // - https://man7.org/linux/man-pages/man2/statx.2.html
-        //   https://github.com/ziglang/zig/blob/master/lib/std/os/linux.zig
-        // Darwin:
-        // - https://github.com/ziglang/zig/blob/master/lib/std/c/darwin.zig
-        const gid: u32 = 0;
-        const uid: u32 = 0;
 
         const archived_file = ArchivedFile{
             .name = fs.path.basename(file_name),
