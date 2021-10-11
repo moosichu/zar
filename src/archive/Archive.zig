@@ -284,24 +284,28 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         var size: u64 = undefined;
         var mode: u64 = undefined;
 
-        if (self.modifiers.use_real_timestamps_and_ids) {
-            // FIXME: Currently windows doesnt support the Stat struct
-            if (builtin.os.tag == .windows) {
-                const file_stats = try file.stat();
-                // Convert timestamp from ns to s
-                mtime = file_stats.mtime;
-                size = file_stats.size;
-                mode = file_stats.mode;
-            } else {
-                const file_stats = try std.os.fstat(file.handle);
+        // FIXME: Currently windows doesnt support the Stat struct
+        if (builtin.os.tag == .windows) {
+            const file_stats = try file.stat();
+            // Convert timestamp from ns to s
+            mtime = file_stats.mtime;
+            size = file_stats.size;
+            mode = file_stats.mode;
+        } else {
+            const file_stats = try std.os.fstat(file.handle);
 
-                gid = file_stats.gid;
-                uid = file_stats.uid;
-                const mtime_full = file_stats.mtime();
-                mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
-                size = @intCast(u64, file_stats.size);
-                mode = file_stats.mode;
-            }
+            gid = file_stats.gid;
+            uid = file_stats.uid;
+            const mtime_full = file_stats.mtime();
+            mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
+            size = @intCast(u64, file_stats.size);
+            mode = file_stats.mode;
+        }
+
+        if (!self.modifiers.use_real_timestamps_and_ids) {
+            gid = 0;
+            uid = 0;
+            mtime = 0;
         }
 
         const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
