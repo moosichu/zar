@@ -19,7 +19,7 @@ const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_a
 const test4_dir = "test/data/test4";
 const test4_gnu_archive = "output_llvm-ar_gnu.a";
 const test4_bsd_archive = "output_llvm-ar_bsd.a";
-const test4_names = [_][]const u8{ "input1.o", "input2.o" };
+const test4_names = [_][]const u8{"input1.o"};
 
 test "List Files GNU test1" {
     try testFileContents(test1_dir, test1_gnu_archive, test1_names);
