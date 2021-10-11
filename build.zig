@@ -12,7 +12,6 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("zar", "src/main.zig");
-    exe.linkSystemLibrary("c");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.install();

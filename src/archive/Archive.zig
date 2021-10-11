@@ -274,30 +274,41 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         // Open the file and read all of its contents
         const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
         defer file.close();
-        const file_stats = try file.stat();
 
+        // We only need to do this because file stats don't include
+        // guid and uid - maybe the right solution is to integrate that into
+        // the std so we can call file.stat() on all platforms.
         var gid: u32 = 0;
         var uid: u32 = 0;
-        var timestamp: u128 = 0;
+        var mtime: i128 = 0;
+        var size: u64 = undefined;
+        var mode: u64 = undefined;
 
         if (self.modifiers.use_real_timestamps_and_ids) {
             // FIXME: Currently windows doesnt support the Stat struct
             if (builtin.os.tag == .windows) {
+                const file_stats = try file.stat();
                 // Convert timestamp from ns to s
-                timestamp = @intCast(u128, @divFloor(file_stats.mtime, 1000_000_000));
+                mtime = file_stats.mtime;
+                size = file_stats.size;
+                mode = file_stats.mode;
             } else {
-                var stat: std.c.Stat = undefined;
-                _ = std.c.fstat(file.handle, &stat);
+                const file_stats = try std.os.fstat(file.handle);
 
-                gid = stat.gid;
-                uid = stat.uid;
-                timestamp = @intCast(u128, stat.mtime().tv_sec);
+                gid = file_stats.gid;
+                uid = file_stats.uid;
+                const mtime_full = file_stats.mtime();
+                mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
+                size = @intCast(u64, file_stats.size);
+                mode = file_stats.mode;
             }
         }
 
+        const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
+
         if (self.modifiers.update_only) {
             // TODO: Write a test that checks for this functionality still working!
-            if (self.stat.mtime >= file_stats.mtime) {
+            if (self.stat.mtime >= mtime) {
                 continue;
             }
         }
@@ -306,8 +317,8 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             .name = fs.path.basename(file_name),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
-                .length = file_stats.size,
-                .mode = if (builtin.os.tag != .windows) file_stats.mode & ~@as(u64, std.os.S.IFREG) else 0,
+                .length = size,
+                .mode = if (builtin.os.tag != .windows) mode & ~@as(u64, std.os.S.IFREG) else 0,
                 .timestamp = timestamp,
                 .gid = gid,
                 .uid = uid,
