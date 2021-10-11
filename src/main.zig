@@ -4,6 +4,7 @@ const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
 const process = std.process;
+const Allocator = std.mem.Allocator;
 
 const Archive = @import("archive/Archive.zig");
 
@@ -67,7 +68,7 @@ fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
     return true;
 }
 
-fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_warning: bool) !fs.File {
+fn openOrCreateFile(archive_path: []const u8, stderr: fs.File.Writer, print_creation_warning: bool) !fs.File {
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
@@ -88,15 +89,17 @@ pub fn main() anyerror!void {
     var allocator = &arena.allocator;
     const args = try process.argsAlloc(allocator);
 
-    // skip the executable name
+    
     const stdout = io.getStdOut().writer();
     const stderr = io.getStdErr().writer();
-
+    
+    // skip the executable name
     var arg_index: u32 = 1;
 
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Process Options First
+    //consider refactoring parsing logic into distinct function to aid with testing
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
         if (!try checkArgsBounds(stderr, args, arg_index)) {
@@ -221,7 +224,33 @@ pub fn main() anyerror!void {
         const empty = [_][:0]u8{};
         break :file_result &empty;
     };
+    
+    //do the Operation
+    try doOperation(
+        allocator, 
+        operation, 
+        archive_path, 
+        archive_type, 
+        stderr, stdout, 
+        modifiers, 
+        files
+    );
 
+    
+}
+
+pub fn doOperation(
+    allocator: *Allocator,
+    operation: Archive.Operation, 
+    archive_path: []const u8,  
+    archive_type: Archive.ArchiveType, 
+    stderr: fs.File.Writer, 
+    stdout: fs.File.Writer,
+    modifiers: Archive.Modifiers,
+    files: [][:0]u8    
+    ) !void {
+    //pointer "allocator" is owned by main
+    //contains the logic do carry out the operations listed in Archive.Operation
     switch (operation) {
         .insert => {
             const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
@@ -292,3 +321,4 @@ pub fn main() anyerror!void {
         },
     }
 }
+
