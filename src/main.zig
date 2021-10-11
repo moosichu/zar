@@ -32,6 +32,7 @@ const overview =
     \\ s - act as ranlib.
     \\ t - display filenames in <archive>.
     \\ x - extract [files] from <archive>.
+    \\ S - show symbols in the <archive>.
     \\
     \\Modifiers:
     \\ c - Disable archive creation warning if inserting files to new archive.
@@ -178,6 +179,7 @@ pub fn main() anyerror!void {
             's' => break :operation Archive.Operation.ranlib,
             't' => break :operation Archive.Operation.print_names,
             'x' => break :operation Archive.Operation.extract,
+            'S' => break :operation Archive.Operation.print_symbols,
             else => {
                 try printError(stderr, "a valid operation must be provided");
                 return;
@@ -276,6 +278,24 @@ pub fn main() anyerror!void {
             if (archive.parse(allocator, stderr)) {
                 for (archive.files.items) |parsed_file| {
                     try parsed_file.contents.write(stdout, stderr);
+                }
+            } else |err| switch (err) {
+                // These are errors we know how to handle
+                error.NotArchive => {
+                    // archive.parse prints appropriate errors for these messages
+                    return;
+                },
+                else => return err,
+            }
+        },
+        .print_symbols => {
+            const file = try fs.cwd().openFile(archive_path, .{});
+            defer file.close();
+
+            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            if (archive.parse(allocator, stderr)) {
+                for (archive.symbols.items) |symbol| {
+                    try stdout.print("{s}\n", .{symbol.name});
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle

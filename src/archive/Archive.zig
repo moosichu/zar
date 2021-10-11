@@ -20,6 +20,7 @@ inferred_archive_type: ArchiveType,
 output_archive_type: ArchiveType,
 
 files: std.ArrayListUnmanaged(ArchivedFile),
+symbols: std.ArrayListUnmanaged(Symbol),
 
 // Use it so we can easily lookup files indices when inserting!
 // TODO: A trie is probably a lot better here
@@ -48,6 +49,7 @@ pub const Operation = enum {
     ranlib,
     print_names,
     extract,
+    print_symbols,
 };
 
 // All archive files start with this magic string
@@ -105,6 +107,10 @@ pub const ArchivedFile = struct {
     contents: Contents,
 };
 
+pub const Symbol = struct {
+    name: []const u8,
+};
+
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
     // TODO: Set this based on the current platform you are using the tool
     // on!
@@ -124,6 +130,7 @@ pub fn create(
         .output_archive_type = output_archive_type,
         .files = .{},
         .filename_to_index = .{},
+        .symbols = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
     };
@@ -376,10 +383,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                         },
                     }
 
-                    const table_size_string = first_line_buffer[48..58];
-                    const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+                    const string_table_num_bytes_string = first_line_buffer[48..58];
+                    const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
 
-                    string_table_contents = try allocator.alloc(u8, table_size);
+                    string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
                     // TODO: actually error handle not expected number of bytes being read!
                     _ = try reader.read(string_table_contents);
                     // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
@@ -395,23 +402,60 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                         },
                     }
 
-                    const table_size_string = first_line_buffer[48..58];
-                    const table_size = try fmt.parseInt(u32, mem.trim(u8, table_size_string, " "), 10);
+                    const symbol_table_num_bytes_string = first_line_buffer[48..58];
+                    const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                    gnu_symbol_table_contents = try allocator.alloc(u8, table_size);
-                    _ = try reader.read(gnu_symbol_table_contents);
+                    const num_symbols = try reader.readInt(u32, .Big);
 
-                    // TODO: Calculate number of entries in symbol table
+                    var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
-                    // TODO: Create an array that is that size
+                    const number_array = try allocator.alloc(u32, num_symbols);
+                    for (number_array) |_, number_index| {
+                        number_array[number_index] = try reader.readInt(u32, .Big);
+                    }
 
-                    // TODO: Put all the strings in that array
+                    num_bytes_remaining = num_bytes_remaining - (@sizeOf(u32) * num_symbols);
 
-                    // TODO: Print them?
+                    gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
                     // TODO: actually error handle not expected number of bytes being read!
+                    _ = try reader.read(gnu_symbol_table_contents);
 
-                    starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+                    var current_symbol_string = gnu_symbol_table_contents;
+                    var current_byte: u32 = 0;
+                    while (current_byte < gnu_symbol_table_contents.len) {
+                        var symbol_length: u32 = 0;
+                        var skip_length: u32 = 0;
+
+                        var found_zero = false;
+                        for (current_symbol_string) |byte| {
+                            if (found_zero and byte != 0) {
+                                break;
+                            }
+
+                            current_byte = current_byte + 1;
+
+                            if (byte == 0) {
+                                found_zero = true;
+                            }
+
+                            skip_length = skip_length + 1;
+
+                            if (!found_zero) {
+                                symbol_length = symbol_length + 1;
+                            }
+                        }
+
+                        const symbol = Symbol{
+                            .name = current_symbol_string[0..symbol_length],
+                        };
+
+                        try self.symbols.append(allocator, symbol);
+
+                        current_symbol_string = current_symbol_string[skip_length..];
+                    }
+
+                    starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
                 } else {
                     try reader.context.seekTo(starting_seek_pos);
                     break;
