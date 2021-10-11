@@ -39,6 +39,8 @@ const overview =
     \\ u - Only update archive contents if [files] have more recent timestamps than it.
     \\ D - Use zero for timestamps, GIDs and UIDs in archived files (enabled by default).
     \\ U - Use real timestamps, GIDS and UIDs for archived files.
+    \\ v - Print verbose output, depending on opertion:
+    \\     S: show file names that symbols belong to.
     \\
     \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
@@ -196,6 +198,7 @@ pub fn main() anyerror!void {
                 'u' => modifiers.update_only = true,
                 'U' => modifiers.use_real_timestamps_and_ids = true,
                 'D' => modifiers.use_real_timestamps_and_ids = false,
+                'v' => modifiers.verbose = true,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }
@@ -295,7 +298,15 @@ pub fn main() anyerror!void {
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
             if (archive.parse(allocator, stderr)) {
                 for (archive.symbols.items) |symbol| {
-                    try stdout.print("{s}\n", .{symbol.name});
+                    if (modifiers.verbose) {
+                        if (archive.file_offset_to_index.get(symbol.file_offset)) |file_index| {
+                            try stdout.print("{s}: {s}\n", .{ archive.files.items[file_index].name, symbol.name });
+                        } else {
+                            try stdout.print("?: {s}\n", .{symbol.name});
+                        }
+                    } else {
+                        try stdout.print("{s}\n", .{symbol.name});
+                    }
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle

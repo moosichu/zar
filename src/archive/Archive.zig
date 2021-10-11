@@ -24,7 +24,8 @@ symbols: std.ArrayListUnmanaged(Symbol),
 
 // Use it so we can easily lookup files indices when inserting!
 // TODO: A trie is probably a lot better here
-filename_to_index: std.StringArrayHashMapUnmanaged(u64),
+file_name_to_index: std.StringArrayHashMapUnmanaged(u64),
+file_offset_to_index: std.AutoArrayHashMapUnmanaged(u64, u64),
 
 modifiers: Modifiers,
 
@@ -83,6 +84,7 @@ pub const Modifiers = extern struct {
     // Only insert files with more recent timestamps than archive
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
+    verbose: bool = false,
 };
 
 pub const Contents = struct {
@@ -109,6 +111,7 @@ pub const ArchivedFile = struct {
 
 pub const Symbol = struct {
     name: []const u8,
+    file_offset: u32,
 };
 
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
@@ -129,8 +132,9 @@ pub fn create(
         .inferred_archive_type = .ambiguous,
         .output_archive_type = output_archive_type,
         .files = .{},
-        .filename_to_index = .{},
         .symbols = .{},
+        .file_name_to_index = .{},
+        .file_offset_to_index = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
     };
@@ -311,7 +315,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         };
 
         // A trie-based datastructure would be better for this!
-        const getOrPutResult = try self.filename_to_index.getOrPut(allocator, archived_file.name);
+        const getOrPutResult = try self.file_name_to_index.getOrPut(allocator, archived_file.name);
         if (getOrPutResult.found_existing) {
             const existing_index = getOrPutResult.value_ptr.*;
             self.files.items[existing_index] = archived_file;
@@ -413,6 +417,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     for (number_array) |_, number_index| {
                         number_array[number_index] = try reader.readInt(u32, .Big);
                     }
+                    defer allocator.free(number_array);
 
                     num_bytes_remaining = num_bytes_remaining - (@sizeOf(u32) * num_symbols);
 
@@ -448,6 +453,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                         const symbol = Symbol{
                             .name = current_symbol_string[0..symbol_length],
+                            .file_offset = number_array[self.symbols.items.len],
                         };
 
                         try self.symbols.append(allocator, symbol);
@@ -467,6 +473,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     var is_first = true;
 
     while (true) {
+        const file_offset = try reader.context.getPos();
+
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
             else => |e| return e,
@@ -628,7 +636,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             try reader.readNoEof(parsed_file.contents.bytes);
         }
 
-        try self.filename_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
+        try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
+        try self.file_offset_to_index.put(allocator, file_offset, self.files.items.len);
         try self.files.append(allocator, parsed_file);
     }
 }
