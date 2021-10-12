@@ -199,6 +199,8 @@ pub fn main() anyerror!void {
                 'U' => modifiers.use_real_timestamps_and_ids = true,
                 'D' => modifiers.use_real_timestamps_and_ids = false,
                 'v' => modifiers.verbose = true,
+                's' => modifiers.build_symbol_table = true,
+                'S' => modifiers.build_symbol_table = false,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }

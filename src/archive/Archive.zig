@@ -91,6 +91,7 @@ pub const Modifiers = extern struct {
     // Only insert files with more recent timestamps than archive
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
+    build_symbol_table: bool = true,
     verbose: bool = false,
 };
 
@@ -477,41 +478,43 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
         };
 
         // Read symbols
-        try file.seekTo(0);
-        blk: {
-            // TODO: Load object from memory (upstream zld)
-            if (mem.eql(u8, magic[0..], "\x7fELF")) {
-                var elf_file = Elf{ .file = file, .name = file_name };
-                defer elf_file.deinit(allocator);
+        if (self.modifiers.build_symbol_table) {
+            try file.seekTo(0);
+            blk: {
+                // TODO: Load object from memory (upstream zld)
+                if (mem.eql(u8, magic[0..], "\x7fELF")) {
+                    var elf_file = Elf{ .file = file, .name = file_name };
+                    defer elf_file.deinit(allocator);
 
-                elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
-                    error.NotObject => break :blk,
-                    else => |e| return e,
-                };
-
-                for (elf_file.symtab.items) |sym| {
-                    switch (sym.st_info >> 4) {
-                        elf.STB_WEAK, elf.STB_GLOBAL => {
-                            try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
-                        },
-                        else => {},
-                    }
-                }
-            } else {
-                const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
-
-                if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
-                    var macho_file = MachO{ .file = file, .name = file_name };
-                    defer macho_file.deinit(allocator);
-
-                    macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                    elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
                         error.NotObject => break :blk,
                         else => |e| return e,
                     };
 
-                    for (macho_file.symtab.items) |sym| {
-                        if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
-                            try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
+                    for (elf_file.symtab.items) |sym| {
+                        switch (sym.st_info >> 4) {
+                            elf.STB_WEAK, elf.STB_GLOBAL => {
+                                try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
+                            },
+                            else => {},
+                        }
+                    }
+                } else {
+                    const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
+
+                    if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+                        var macho_file = MachO{ .file = file, .name = file_name };
+                        defer macho_file.deinit(allocator);
+
+                        macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                            error.NotObject => break :blk,
+                            else => |e| return e,
+                        };
+
+                        for (macho_file.symtab.items) |sym| {
+                            if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
+                                try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
+                            }
                         }
                     }
                 }
