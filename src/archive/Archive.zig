@@ -494,7 +494,9 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                     for (elf_file.symtab.items) |sym| {
                         switch (sym.st_info >> 4) {
                             elf.STB_WEAK, elf.STB_GLOBAL => {
-                                try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
+                                if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
+                                    try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
+                                }
                             },
                             else => {},
                         }
