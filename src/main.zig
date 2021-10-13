@@ -299,10 +299,10 @@ pub fn main() anyerror!void {
             if (archive.parse(allocator, stderr)) {
                 for (archive.symbols.items) |symbol| {
                     if (modifiers.verbose) {
-                        if (archive.file_offset_to_index.get(symbol.file_offset)) |file_index| {
-                            try stdout.print("{s}: {s}\n", .{ archive.files.items[file_index].name, symbol.name });
-                        } else {
+                        if (symbol.file_index == Archive.invalid_file_index) {
                             try stdout.print("?: {s}\n", .{symbol.name});
+                        } else {
+                            try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
                         }
                     } else {
                         try stdout.print("{s}\n", .{symbol.name});
