@@ -115,13 +115,8 @@ pub const Contents = struct {
 pub const ArchivedFile = struct {
     name: []const u8,
     contents: Contents,
-    symbols: std.ArrayListUnmanaged([]const u8) = .{},
 
     const Self = @This();
-
-    pub fn addSymbol(self: *Self, allocator: *Allocator, sym: []const u8) !void {
-        try self.symbols.append(allocator, sym);
-    }
 };
 
 pub const Symbol = struct {
@@ -187,21 +182,27 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     defer symbol_offset.deinit();
     defer symbol_string_offset.deinit();
 
-    // Calculate the offset of symbols independent of string table and symbol table itself.
-    // It is basically magic size + file offset from position 0
+    // Calculate the offset of file independent of string table and symbol table itself.
+    // It is basically magic size + file size from position 0
     var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
+    var file_offset = std.ArrayList(u32).init(allocator);
+    defer file_offset.deinit();
+
     for (self.files.items) |file| {
-        for (file.symbols.items) |symbol| {
-            try symbol_string_offset.append(@intCast(u32, symbol_table.items.len));
+        try file_offset.append(offset);
 
-            try symbol_table.appendSlice(symbol);
-            try symbol_table.append(0);
-
-            try symbol_offset.append(offset);
-
-            symbol_count += 1;
-        }
         offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+    }
+
+    for (self.symbols.items) |symbol| {
+        try symbol_string_offset.append(@intCast(u32, symbol_table.items.len));
+
+        try symbol_table.appendSlice(symbol.name);
+        try symbol_table.append(0);
+
+        try symbol_offset.append(file_offset.items[symbol.file_index]);
+
+        symbol_count += 1;
     }
 
     switch (self.output_archive_type) {
@@ -495,7 +496,11 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                         switch (sym.st_info >> 4) {
                             elf.STB_WEAK, elf.STB_GLOBAL => {
                                 if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
-                                    try archived_file.addSymbol(allocator, try allocator.dupe(u8, elf_file.getString(sym.st_name)));
+                                    const symbol = Symbol{
+                                        .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
+                                        .file_index = self.files.items.len,
+                                    };
+                                    try self.symbols.append(allocator, symbol);
                                 }
                             },
                             else => {},
@@ -515,7 +520,11 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
 
                         for (macho_file.symtab.items) |sym| {
                             if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
-                                try archived_file.addSymbol(allocator, try allocator.dupe(u8, macho_file.getString(sym.n_strx)));
+                                const symbol = Symbol{
+                                    .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                                    .file_index = self.files.items.len,
+                                };
+                                try self.symbols.append(allocator, symbol);
                             }
                         }
                     }
