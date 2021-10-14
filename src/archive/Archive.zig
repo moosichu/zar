@@ -6,6 +6,10 @@ const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
 const log = std.log.scoped(.archive);
+const elf = std.elf;
+const Elf = @import("../link/Elf/Object.zig");
+const MachO = @import("../link/MachO/Object.zig");
+const macho = std.macho;
 
 const Allocator = std.mem.Allocator;
 
@@ -77,6 +81,8 @@ pub const Header = extern struct {
     ar_mode: [8]u8,
     ar_size: [10]u8,
     ar_fmag: [2]u8,
+
+    pub const format_string = "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n";
 };
 
 pub const Modifiers = extern struct {
@@ -85,6 +91,7 @@ pub const Modifiers = extern struct {
     // Only insert files with more recent timestamps than archive
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
+    build_symbol_table: bool = true,
     verbose: bool = false,
 };
 
@@ -108,6 +115,8 @@ pub const Contents = struct {
 pub const ArchivedFile = struct {
     name: []const u8,
     contents: Contents,
+
+    const Self = @This();
 };
 
 pub const Symbol = struct {
@@ -164,6 +173,38 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
+    // Create common symbol table information
+    var symbol_count: u32 = 0;
+    var symbol_table = std.ArrayList(u8).init(allocator);
+    var symbol_offset = std.ArrayList(u32).init(allocator);
+    var symbol_string_offset = std.ArrayList(u32).init(allocator);
+    defer symbol_table.deinit();
+    defer symbol_offset.deinit();
+    defer symbol_string_offset.deinit();
+
+    // Calculate the offset of file independent of string table and symbol table itself.
+    // It is basically magic size + file size from position 0
+    var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
+    var file_offset = std.ArrayList(u32).init(allocator);
+    defer file_offset.deinit();
+
+    for (self.files.items) |file| {
+        try file_offset.append(offset);
+
+        offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+    }
+
+    for (self.symbols.items) |symbol| {
+        try symbol_string_offset.append(@intCast(u32, symbol_table.items.len));
+
+        try symbol_table.appendSlice(symbol.name);
+        try symbol_table.append(0);
+
+        try symbol_offset.append(file_offset.items[symbol.file_index]);
+
+        symbol_count += 1;
+    }
+
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
@@ -192,6 +233,50 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 _ = try std.fmt.bufPrint(&(header_names[index]), "{s: <16}", .{name});
             }
 
+            // Write the symbol table itself
+            {
+                if (symbol_table.items.len != 0) {
+                    if (symbol_table.items.len % 2 != 0)
+                        try symbol_table.append(0);
+
+                    const format = self.output_archive_type;
+
+                    const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
+                    const symbol_table_size = symbol_table.items.len + (symbol_offset.items.len * int_size) + int_size;
+
+                    try writer.print(Header.format_string, .{
+                        allocator.dupe(u8, if (format == .gnu64) "/SYM64/" else "/"),
+                        0,
+                        0,
+                        0,
+                        0,
+                        symbol_table_size,
+                    });
+
+                    if (format == .gnu64) {
+                        try writer.writeIntBig(u64, symbol_count);
+                    } else {
+                        try writer.writeIntBig(u32, symbol_count);
+                    }
+
+                    for (symbol_offset.items) |off| {
+                        // zig fmt: off
+                        const local_offset =
+                            @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
+                            if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+                        // zig fmt: on
+
+                        if (format == .gnu64) {
+                            try writer.writeIntBig(u64, off + @intCast(u64, local_offset));
+                        } else {
+                            try writer.writeIntBig(u32, off + @intCast(u32, local_offset));
+                        }
+                    }
+
+                    try writer.writeAll(symbol_table.items);
+                }
+            }
+
             // Write the string table itself
             {
                 if (string_table.items.len != 0) {
@@ -202,6 +287,62 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             }
         },
         .bsd, .darwin64 => {
+            // BSD format: Write the symbol table
+            if (symbol_table.items.len != 0) {
+                if (symbol_table.items.len % 2 != 0)
+                    try symbol_table.append(0);
+
+                const format = self.output_archive_type;
+                const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
+
+                const ranlib_size = symbol_count * (int_size * 2);
+                const symbol_table_size =
+                    12 + // Size of name
+                    int_size + // Int describing the size of ranlib
+                    ranlib_size + // Size of ranlib structs
+                    int_size + // Int describing size of symbol table's strings
+                    symbol_table.items.len; // The lengths of strings themselves
+
+                try writer.print(Header.format_string, .{
+                    "#1/12",
+                    0,
+                    0,
+                    0,
+                    0,
+                    symbol_table_size,
+                });
+
+                const endian = builtin.cpu.arch.endian();
+
+                if (format == .darwin64) {
+                    try writer.writeAll("__.SYMDEF_64");
+                    try writer.writeInt(u64, @intCast(u64, ranlib_size), endian);
+                } else {
+                    try writer.writeAll("__.SYMDEF\x00\x00\x00");
+                    try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
+                }
+
+                for (symbol_string_offset.items) |off, i| {
+                    const local_offset = @sizeOf(Header) + symbol_table_size;
+                    const solved_offset = local_offset + symbol_offset.items[i];
+
+                    if (format == .darwin64) {
+                        try writer.writeInt(u64, off, endian);
+                        try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
+                    } else {
+                        try writer.writeInt(u32, off, endian);
+                        try writer.writeInt(u32, @intCast(u32, solved_offset), endian);
+                    }
+                }
+                if (format == .darwin64) {
+                    try writer.writeInt(u64, @intCast(u64, symbol_table.items.len), endian);
+                } else {
+                    try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
+                }
+
+                try writer.writeAll(symbol_table.items);
+            }
+
             // BSD format: Just write the length of the name in header
             for (self.files.items) |file, index| {
                 _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
@@ -210,6 +351,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         else => unreachable,
     }
 
+    const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
+
     // Write the files
     for (self.files.items) |file, index| {
         // Write the header
@@ -217,8 +360,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         var headerBuffer: [@sizeOf(Header)]u8 = undefined;
         _ = try std.fmt.bufPrint(
             &headerBuffer,
-            "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n",
-            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length },
+            Header.format_string,
+            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length + if (is_bsd) file.name.len else 0 },
         );
 
         // TODO: handle errors
@@ -310,6 +453,12 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
 
         const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
 
+        // Get the file magic
+        var magic: [4]u8 = undefined;
+        _ = try file.reader().read(&magic);
+
+        try file.seekTo(0);
+
         if (self.modifiers.update_only) {
             // TODO: Write a test that checks for this functionality still working!
             if (self.stat.mtime >= mtime) {
@@ -317,8 +466,8 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             }
         }
 
-        const archived_file = ArchivedFile{
-            .name = fs.path.basename(file_name),
+        var archived_file = ArchivedFile{
+            .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = size,
@@ -328,6 +477,60 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                 .uid = uid,
             },
         };
+
+        // Read symbols
+        if (self.modifiers.build_symbol_table) {
+            try file.seekTo(0);
+            blk: {
+                // TODO: Load object from memory (upstream zld)
+                if (mem.eql(u8, magic[0..], "\x7fELF")) {
+                    var elf_file = Elf{ .file = file, .name = file_name };
+                    defer elf_file.deinit(allocator);
+
+                    elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                        error.NotObject => break :blk,
+                        else => |e| return e,
+                    };
+
+                    for (elf_file.symtab.items) |sym| {
+                        switch (sym.st_info >> 4) {
+                            elf.STB_WEAK, elf.STB_GLOBAL => {
+                                if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
+                                    const symbol = Symbol{
+                                        .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
+                                        .file_index = self.files.items.len,
+                                    };
+                                    try self.symbols.append(allocator, symbol);
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                } else {
+                    const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
+
+                    if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+                        var macho_file = MachO{ .file = file, .name = file_name };
+                        defer macho_file.deinit(allocator);
+
+                        macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                            error.NotObject => break :blk,
+                            else => |e| return e,
+                        };
+
+                        for (macho_file.symtab.items) |sym| {
+                            if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
+                                const symbol = Symbol{
+                                    .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                                    .file_index = self.files.items.len,
+                                };
+                                try self.symbols.append(allocator, symbol);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // A trie-based datastructure would be better for this!
         const getOrPutResult = try self.file_name_to_index.getOrPut(allocator, archived_file.name);
