@@ -372,8 +372,13 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             try writer.writeAll(file.name);
         }
 
-        if (self.output_archive_type != .gnuthin)
+        if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
+            
+            // Add padding to even sized file boundary
+            if ((try self.file.getPos()) % 2 != 0)
+                try writer.writeByte('\n');
+        }
     }
 
     // Truncate the file size
