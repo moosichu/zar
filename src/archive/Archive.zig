@@ -25,7 +25,6 @@ symbols: std.ArrayListUnmanaged(Symbol),
 // Use it so we can easily lookup files indices when inserting!
 // TODO: A trie is probably a lot better here
 file_name_to_index: std.StringArrayHashMapUnmanaged(u64),
-file_offset_to_index: std.AutoArrayHashMapUnmanaged(u64, u64),
 
 modifiers: Modifiers,
 
@@ -64,6 +63,8 @@ pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_l
 // BSD constants
 pub const bsd_name_length_signifier = "#1/";
 pub const bsd_symdef_magic = "__.SYMDEF";
+
+pub const invalid_file_index = std.math.maxInt(u64);
 
 // The format (unparsed) of the archive per-file header
 // NOTE: The reality is more complex than this as different mechanisms
@@ -111,7 +112,7 @@ pub const ArchivedFile = struct {
 
 pub const Symbol = struct {
     name: []const u8,
-    file_offset: u32,
+    file_index: u64,
 };
 
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
@@ -134,7 +135,6 @@ pub fn create(
         .files = .{},
         .symbols = .{},
         .file_name_to_index = .{},
-        .file_offset_to_index = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
     };
@@ -468,7 +468,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                         const symbol = Symbol{
                             .name = current_symbol_string[0..symbol_length],
-                            .file_offset = number_array[self.symbols.items.len],
+                            // Note - we don't set the final file-index here,
+                            // we recalculate and override that later in parsing
+                            // when we know what they are!
+                            .file_index = number_array[self.symbols.items.len],
                         };
 
                         try self.symbols.append(allocator, symbol);
@@ -486,6 +489,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     }
 
     var is_first = true;
+
+    var file_offset_to_index: std.AutoArrayHashMapUnmanaged(u64, u64) = .{};
+    defer file_offset_to_index.clearAndFree(allocator);
 
     while (true) {
         const file_offset = try reader.context.getPos();
@@ -652,8 +658,16 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
-        try self.file_offset_to_index.put(allocator, file_offset, self.files.items.len);
+        try file_offset_to_index.put(allocator, file_offset, self.files.items.len);
         try self.files.append(allocator, parsed_file);
+    }
+
+    for (self.symbols.items) |*symbol| {
+        if (file_offset_to_index.get(symbol.file_index)) |file_index| {
+            symbol.file_index = file_index;
+        } else {
+            symbol.file_index = invalid_file_index;
+        }
     }
 }
 
