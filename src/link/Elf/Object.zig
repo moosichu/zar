@@ -26,6 +26,10 @@ strtab: std.ArrayListUnmanaged(u8) = .{},
 
 symtab_index: ?u16 = null,
 
+pub fn init(file: fs.File, name: []const u8) Object {
+    return .{.file = file, .name = name};
+}
+
 pub fn deinit(self: *Object, allocator: *Allocator) void {
     self.shdrs.deinit(allocator);
     self.sections.deinit(allocator);

@@ -41,7 +41,7 @@ pub const ArchiveType = enum {
     gnu64,
     bsd,
     darwin64, // darwin_32 *is* bsd
-    coff, // (windows)
+    coff, // windows
 };
 
 pub const Operation = enum {
@@ -178,9 +178,11 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     var symbol_table = std.ArrayList(u8).init(allocator);
     var symbol_offset = std.ArrayList(u32).init(allocator);
     var symbol_string_offset = std.ArrayList(u32).init(allocator);
-    defer symbol_table.deinit();
-    defer symbol_offset.deinit();
-    defer symbol_string_offset.deinit();
+    defer {
+        symbol_table.deinit();
+        symbol_offset.deinit();
+        symbol_string_offset.deinit();
+    }
 
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
@@ -334,11 +336,11 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                         try writer.writeInt(u32, @intCast(u32, solved_offset), endian);
                     }
                 }
-                if (format == .darwin64) {
-                    try writer.writeInt(u64, @intCast(u64, symbol_table.items.len), endian);
-                } else {
+
+                if (format == .darwin64)
+                    try writer.writeInt(u64, @intCast(u64, symbol_table.items.len), endian)
+                else
                     try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
-                }
 
                 try writer.writeAll(symbol_table.items);
             }
@@ -368,13 +370,11 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try writer.write(&headerBuffer);
 
         // Write the name of the file in the data section
-        if (self.output_archive_type == .bsd) {
+        if (self.output_archive_type == .bsd)
             try writer.writeAll(file.name);
-        }
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
-            
             // Add padding to even sized file boundary
             if ((try self.file.getPos()) % 2 != 0)
                 try writer.writeByte('\n');
@@ -464,12 +464,9 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
 
         try file.seekTo(0);
 
-        if (self.modifiers.update_only) {
-            // TODO: Write a test that checks for this functionality still working!
-            if (self.stat.mtime >= mtime) {
-                continue;
-            }
-        }
+        // TODO: Write a test that checks for this functionality still working!
+        if (self.modifiers.update_only and self.stat.mtime >= mtime)
+            continue;
 
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
@@ -489,7 +486,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             blk: {
                 // TODO: Load object from memory (upstream zld)
                 if (mem.eql(u8, magic[0..], "\x7fELF")) {
-                    var elf_file = Elf{ .file = file, .name = file_name };
+                    var elf_file = Elf.init(file, file_name);
                     defer elf_file.deinit(allocator);
 
                     elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
@@ -515,7 +512,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                     const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
                     if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
-                        var macho_file = MachO{ .file = file, .name = file_name };
+                        var macho_file = MachO.init(file, file_name);
                         defer macho_file.deinit(allocator);
 
                         macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
@@ -556,10 +553,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         var magic: [magic_string.len]u8 = undefined;
         const bytes_read = try reader.read(&magic);
 
-        if (bytes_read == 0) {
-            // Archive is empty and that is ok!
+        // Archive is empty and that is ok!
+        if (bytes_read == 0)
             return;
-        }
 
         if (bytes_read < magic_string.len) {
             try stderr.print("File too short to be an archive\n", .{});

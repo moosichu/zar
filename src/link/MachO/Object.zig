@@ -121,6 +121,10 @@ const DebugInfo = struct {
     }
 };
 
+pub fn init(file: fs.File, name: []const u8) Object {
+    return .{.file = file, .name = name};
+}
+
 pub fn deinit(self: *Object, allocator: *Allocator) void {
     for (self.load_commands.items) |*lc| {
         lc.deinit(allocator);
