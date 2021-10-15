@@ -59,10 +59,11 @@ pub const Operation = enum {
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
 pub const magic_thin = "!<thin>\n";
+pub const magic_len = magic_string.len;
 
 // GNU constants
 pub const gnu_first_line_buffer_length = 60;
-pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_length;
+pub const gnu_string_table_seek_pos = magic_len + gnu_first_line_buffer_length;
 
 // BSD constants
 pub const bsd_name_length_signifier = "#1/";
@@ -186,7 +187,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
-    var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
+    var offset: u32 = magic_len; // magic_len == magic_thin.len, so its not a problem
     var file_offset = std.ArrayList(u32).init(allocator);
     defer file_offset.deinit();
 
@@ -550,14 +551,14 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
-        var magic: [magic_string.len]u8 = undefined;
+        var magic: [magic_len]u8 = undefined;
         const bytes_read = try reader.read(&magic);
 
         // Archive is empty and that is ok!
         if (bytes_read == 0)
             return;
 
-        if (bytes_read < magic_string.len) {
+        if (bytes_read < magic_len) {
             try stderr.writeAll("error: file too short to be an archive\n");
             return error.NotArchive;
         }
@@ -568,7 +569,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
-            try stderr.print("error: invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
+            try stderr.print("error: invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string[0..7], magic_thin[0..7], magic[0..7] });
             return error.NotArchive;
         }
     }
@@ -579,7 +580,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     {
         // https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=5
         // Process string/symbol tables and/or try to infer archive type!
-        var starting_seek_pos = magic_string.len;
+        var starting_seek_pos = magic_len;
         while (true) {
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
