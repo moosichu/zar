@@ -58,8 +58,8 @@ const version_details =
 ;
 
 fn printError(stderr: anytype, comptime errorString: []const u8) !void {
-    try stderr.print("error: " ++ errorString ++ "\n", .{});
-    try stderr.print(overview, .{});
+    try stderr.writeAll("error: " ++ errorString ++ "\n");
+    try stderr.writeAll(overview);
 }
 
 fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
@@ -74,7 +74,7 @@ fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_w
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
-                try stderr.print("Warning: creating new archive as none exists at path provided\n", .{});
+                try stderr.writeAll("warning: creating new archive as none exists at path provided\n");
             }
             const create_file_handle = try fs.cwd().createFile(archive_path, .{ .read = true });
             return create_file_handle;
@@ -129,8 +129,8 @@ pub fn main() anyerror!void {
                 } else if (mem.eql(u8, format_string, "gnu")) {
                     archive_type = .gnu;
                 } else {
-                    // TODO: do an actual error here!
-                    return error.TODO;
+                    try stderr.writeAll("error: Unkown format option. supported format types are default, gnu, darwin and bsd");
+                    return error.UnkownFormatOption;
                 }
                 arg_index = arg_index + 1;
                 continue;
