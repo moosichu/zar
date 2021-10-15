@@ -558,7 +558,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             return;
 
         if (bytes_read < magic_string.len) {
-            try stderr.print("File too short to be an archive\n", .{});
+            try stderr.writeAll("error: file too short to be an archive\n");
             return error.NotArchive;
         }
 
@@ -568,7 +568,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
-            try stderr.print("Invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
+            try stderr.print("error: invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
             return error.NotArchive;
         }
     }
@@ -601,7 +601,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                         .ambiguous => self.inferred_archive_type = .gnu,
                         .gnu, .gnuthin, .gnu64 => {},
                         else => {
-                            try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
+                            try stderr.print("error: came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
                             return error.NotArchive;
                         },
                     }
@@ -620,7 +620,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                         .ambiguous => self.inferred_archive_type = .gnu,
                         .gnu, .gnuthin, .gnu64 => {},
                         else => {
-                            try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
+                            try stderr.print("error: came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
                             return error.NotArchive;
                         },
                     }
@@ -742,13 +742,13 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
             .gnu, .gnuthin, .gnu64 => {
                 if (!must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
+                    try stderr.print("error: parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
                     return error.BadArchive;
                 }
             },
             .bsd, .darwin64 => {
                 if (must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't bsd compatible\n", .{trimmed_archive_name});
+                    try stderr.print("error: parsing archive header name - format of {s} wasn't bsd compatible\n", .{trimmed_archive_name});
                     return error.BadArchive;
                 }
             },
@@ -775,7 +775,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             // Find the end of the string (which is always a newline)
             const end_string_index = mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
-                try stderr.print("Error parsing name in string table, couldn't find terminating character\n", .{});
+                try stderr.writeAll("error: parsing name in string table, couldn't find terminating character\n");
                 return error.NotArchive;
             }
             const string_full = string_start[0..end_string_index.?];
@@ -783,7 +783,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             // String must have a forward slash before the newline, so check that
             // is there and remove it as well!
             if (string_full[string_full.len - 1] != '/') {
-                try stderr.print("Error parsing name in string table, didn't find '/' before terminating newline\n", .{});
+                try stderr.writeAll("error: parsing name in string table, didn't find '/' before terminating newline\n");
                 return error.NotArchive;
             }
 
@@ -798,7 +798,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
-                try stderr.print("Error parsing bsd-style string length\n", .{});
+                try stderr.writeAll("error: parsing bsd-style string length\n");
                 return error.NotArchive;
             };
 
@@ -950,7 +950,7 @@ pub const MRIParser = struct {
                             .list => {
                                 // TODO: verbose output
                                 for (archive.files.items) |parsed_file| {
-                                    try stdout.print("{s}\n", .{parsed_file.name});
+                                    try stdout.writeAll(parsed_file.name ++ "\n");
                                 }
                             },
                             .delete => {
