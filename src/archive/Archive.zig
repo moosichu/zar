@@ -184,7 +184,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
-    var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
+    var offset: u32 = magic_string.len;
     var file_offset = std.ArrayList(u32).init(allocator);
     defer file_offset.deinit();
 
