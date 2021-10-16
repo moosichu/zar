@@ -560,7 +560,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             return;
         }
 
-        if (bytes_read < magic_len) {
+        if (bytes_read < magic_string.len) {
             try stderr.print("File too short to be an archive\n", .{});
             return error.NotArchive;
         }
