@@ -129,7 +129,7 @@ pub fn main() anyerror!void {
                 } else if (mem.eql(u8, format_string, "gnu")) {
                     archive_type = .gnu;
                 } else {
-                    try stderr.writeAll("error: Unkown format option. supported format types are default, gnu, darwin and bsd");
+                    try stderr.writeAll("error: Unkown format option. supported format types are default, gnu, gnuthin, gnu64, bsd, darwin64 and coff");
                     return error.UnkownFormatOption;
                 }
                 arg_index = arg_index + 1;
