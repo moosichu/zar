@@ -240,7 +240,7 @@ pub fn main() anyerror!void {
                 try archive.finalize(allocator);
             } else |err| switch (err) {
                 // These are errors we know how to handle
-                error.NotArchive => {
+                error.NotArchive, error.MalformedArchive => {
                     // archive.parse prints appropriate errors for these messages
                     return;
                 },
@@ -268,7 +268,7 @@ pub fn main() anyerror!void {
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle
-                error.NotArchive => {
+                error.NotArchive, error.MalformedArchive => {
                     // archive.parse prints appropriate errors for these messages
                     return;
                 },
@@ -286,7 +286,7 @@ pub fn main() anyerror!void {
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle
-                error.NotArchive => {
+                error.NotArchive, error.MalformedArchive => {
                     // archive.parse prints appropriate errors for these messages
                     return;
                 },
@@ -312,7 +312,7 @@ pub fn main() anyerror!void {
                 }
             } else |err| switch (err) {
                 // These are errors we know how to handle
-                error.NotArchive => {
+                error.NotArchive, error.MalformedArchive => {
                     // archive.parse prints appropriate errors for these messages
                     return;
                 },

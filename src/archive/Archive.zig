@@ -374,7 +374,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
-            
+
             // Add padding to even sized file boundary
             if ((try self.file.getPos()) % 2 != 0)
                 try writer.writeByte('\n');
@@ -599,99 +599,102 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 break :result true;
             };
 
-            if (has_line_to_process) {
-                if (mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
-                    switch (self.inferred_archive_type) {
-                        .ambiguous => self.inferred_archive_type = .gnu,
-                        .gnu, .gnuthin, .gnu64 => {},
-                        else => {
-                            try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
-                            return error.NotArchive;
-                        },
-                    }
+            if (!has_line_to_process) {
+                try reader.context.seekTo(starting_seek_pos);
+                break;
+            }
 
-                    const string_table_num_bytes_string = first_line_buffer[48..58];
-                    const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
+            if (mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
+                switch (self.inferred_archive_type) {
+                    .ambiguous => self.inferred_archive_type = .gnu,
+                    .gnu, .gnuthin, .gnu64 => {},
+                    else => {
+                        try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
+                        return error.NotArchive;
+                    },
+                }
 
-                    string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
-                    // TODO: actually error handle not expected number of bytes being read!
-                    _ = try reader.read(string_table_contents);
-                    // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
-                    break;
-                } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
-                    has_gnu_symbol_table = true;
-                    switch (self.inferred_archive_type) {
-                        .ambiguous => self.inferred_archive_type = .gnu,
-                        .gnu, .gnuthin, .gnu64 => {},
-                        else => {
-                            try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
-                            return error.NotArchive;
-                        },
-                    }
+                const string_table_num_bytes_string = first_line_buffer[48..58];
+                const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
 
-                    const symbol_table_num_bytes_string = first_line_buffer[48..58];
-                    const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
+                string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
+                // TODO: actually error handle not expected number of bytes being read!
+                _ = try reader.read(string_table_contents);
+                // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+                break;
+            } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
+                has_gnu_symbol_table = true;
+                switch (self.inferred_archive_type) {
+                    .ambiguous => self.inferred_archive_type = .gnu,
+                    .gnu, .gnuthin, .gnu64 => {},
+                    else => {
+                        try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
+                        return error.NotArchive;
+                    },
+                }
 
-                    const num_symbols = try reader.readInt(u32, .Big);
+                const symbol_table_num_bytes_string = first_line_buffer[48..58];
+                const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                    var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
+                const num_symbols = try reader.readInt(u32, .Big);
 
-                    const number_array = try allocator.alloc(u32, num_symbols);
-                    for (number_array) |_, number_index| {
-                        number_array[number_index] = try reader.readInt(u32, .Big);
-                    }
-                    defer allocator.free(number_array);
+                var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
-                    num_bytes_remaining = num_bytes_remaining - (@sizeOf(u32) * num_symbols);
+                const number_array = try allocator.alloc(u32, num_symbols);
+                for (number_array) |_, number_index| {
+                    number_array[number_index] = try reader.readInt(u32, .Big);
+                }
+                defer allocator.free(number_array);
 
-                    gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
+                num_bytes_remaining = num_bytes_remaining - (@sizeOf(u32) * num_symbols);
 
-                    // TODO: actually error handle not expected number of bytes being read!
-                    _ = try reader.read(gnu_symbol_table_contents);
+                gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
-                    var current_symbol_string = gnu_symbol_table_contents;
-                    var current_byte: u32 = 0;
-                    while (current_byte < gnu_symbol_table_contents.len) {
-                        var symbol_length: u32 = 0;
-                        var skip_length: u32 = 0;
+                // TODO: actually error handle not expected number of bytes being read!
+                _ = try reader.read(gnu_symbol_table_contents);
 
-                        var found_zero = false;
-                        for (current_symbol_string) |byte| {
-                            if (found_zero and byte != 0) {
-                                break;
-                            }
+                var current_symbol_string = gnu_symbol_table_contents;
+                var current_byte: u32 = 0;
+                while (current_byte < gnu_symbol_table_contents.len) {
+                    var symbol_length: u32 = 0;
+                    var skip_length: u32 = 0;
 
-                            current_byte = current_byte + 1;
-
-                            if (byte == 0) {
-                                found_zero = true;
-                            }
-
-                            skip_length = skip_length + 1;
-
-                            if (!found_zero) {
-                                symbol_length = symbol_length + 1;
-                            }
+                    var found_zero = false;
+                    for (current_symbol_string) |byte| {
+                        if (found_zero and byte != 0) {
+                            break;
                         }
 
-                        const symbol = Symbol{
-                            .name = current_symbol_string[0..symbol_length],
-                            // Note - we don't set the final file-index here,
-                            // we recalculate and override that later in parsing
-                            // when we know what they are!
-                            .file_index = number_array[self.symbols.items.len],
-                        };
+                        current_byte = current_byte + 1;
 
-                        try self.symbols.append(allocator, symbol);
+                        if (byte == 0) {
+                            found_zero = true;
+                        }
 
-                        current_symbol_string = current_symbol_string[skip_length..];
+                        skip_length = skip_length + 1;
+
+                        if (!found_zero) {
+                            symbol_length = symbol_length + 1;
+                        }
                     }
 
-                    starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
-                } else {
-                    try reader.context.seekTo(starting_seek_pos);
-                    break;
+                    const symbol = Symbol{
+                        .name = current_symbol_string[0..symbol_length],
+                        // Note - we don't set the final file-index here,
+                        // we recalculate and override that later in parsing
+                        // when we know what they are!
+                        .file_index = number_array[self.symbols.items.len],
+                    };
+
+                    try self.symbols.append(allocator, symbol);
+
+                    current_symbol_string = current_symbol_string[skip_length..];
                 }
+
+                starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
+            } else {
+                try reader.context.seekTo(starting_seek_pos);
+                break;
             }
         }
     }
@@ -826,8 +829,6 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 try reader.context.seekTo(current_seek_pos);
             }
 
-            is_first = false;
-
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 
             // TODO: proper error handling and length checking here!
@@ -868,6 +869,16 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
         try file_offset_to_index.put(allocator, file_offset, self.files.items.len);
         try self.files.append(allocator, parsed_file);
+
+        is_first = false;
+    }
+
+    if (is_first) {
+        const current_position = try reader.context.getPos();
+        if (current_position > magic_string.len) {
+            try stderr.print("Malformed archive contents.\n", .{});
+            return error.MalformedArchive;
+        }
     }
 
     for (self.symbols.items) |*symbol| {
