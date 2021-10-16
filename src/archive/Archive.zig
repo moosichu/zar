@@ -622,7 +622,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                         coff_file.parse(allocator, builtin.target) catch |err| return err;
                         
                         for (coff_file.symtab.items) |sym| {
-                            if (sym.storage_class == 2) {
+                            if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
                                 const symbol = Symbol{
                                     .name = try allocator.dupe(u8, sym.getName(&coff_file)),
                                     .file_index = self.files.items.len,
