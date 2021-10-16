@@ -591,7 +591,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             };
 
             if (chars_read < first_line_buffer.len) {
-                return;
+                try stderr.writeAll("error: remaining size of archive too small for next archive member header at offset 8\n");
+                return error.MalformedArchive;
             }
 
             if (mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
