@@ -10,6 +10,8 @@ const elf = std.elf;
 const Elf = @import("../link/Elf/Object.zig");
 const MachO = @import("../link/MachO/Object.zig");
 const macho = std.macho;
+const Coff = @import("../link/Coff/Object.zig");
+const coff = std.coff;
 
 const Allocator = std.mem.Allocator;
 
@@ -607,6 +609,22 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                             if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
                                 const symbol = Symbol{
                                     .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                                    .file_index = self.files.items.len,
+                                };
+                                try self.symbols.append(allocator, symbol);
+                            }
+                        }
+                    }
+                    else {
+                        var coff_file = Coff{ .file = file, .name = file_name };
+                        defer coff_file.deinit(allocator);
+                        
+                        coff_file.parse(allocator, builtin.target) catch |err| return err;
+                        
+                        for (coff_file.symtab.items) |sym| {
+                            if (sym.storage_class == 2) {
+                                const symbol = Symbol{
+                                    .name = try allocator.dupe(u8, &sym.name),
                                     .file_index = self.files.items.len,
                                 };
                                 try self.symbols.append(allocator, symbol);
