@@ -590,6 +590,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 else => |e| return e,
             };
 
+            if (chars_read == 0) {
+                return;
+            }
+
             if (chars_read < first_line_buffer.len) {
                 try stderr.writeAll("error: remaining size of archive too small for next archive member header at offset 8\n");
                 return error.MalformedArchive;
