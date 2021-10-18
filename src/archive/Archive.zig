@@ -34,6 +34,8 @@ modifiers: Modifiers,
 
 stat: fs.File.Stat,
 
+error_string: []const u8,
+
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
@@ -54,6 +56,11 @@ pub const Operation = enum {
     print_names,
     extract,
     print_symbols,
+};
+
+pub const ParseError = error{
+    NotArchive,
+    MalformedArchive,
 };
 
 // All archive files start with this magic string
@@ -146,6 +153,7 @@ pub fn create(
         .file_name_to_index = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
+        .error_string = "Unknown error occured",
     };
 }
 
@@ -549,7 +557,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
+pub fn parse(self: *Archive, allocator: *Allocator) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
@@ -562,8 +570,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         }
 
         if (bytes_read < magic_string.len) {
-            try stderr.print("File too short to be an archive\n", .{});
-            return error.NotArchive;
+            self.error_string = "File too short to be an archive.";
+            return ParseError.NotArchive;
         }
 
         const is_thin_archive = mem.eql(u8, &magic, magic_thin);
@@ -572,8 +580,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
-            try stderr.print("Invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
-            return error.NotArchive;
+            self.error_string = try fmt.allocPrint(allocator, "Invalid magic string: expected '{s}' or '{s}', found '{s}'.", .{ magic_string, magic_thin, magic });
+            return ParseError.NotArchive;
         }
     }
 
@@ -609,8 +617,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
-                        return error.NotArchive;
+                        self.error_string = try fmt.allocPrint(allocator, "Came across gnu-style string table in {} archive.", .{self.inferred_archive_type});
+                        return ParseError.MalformedArchive;
                     },
                 }
 
@@ -628,8 +636,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
-                        return error.NotArchive;
+                        self.error_string = try fmt.allocPrint(allocator, "Came across gnu-style symbol table in {} archive.", .{self.inferred_archive_type});
+                        return ParseError.MalformedArchive;
                     },
                 }
 
@@ -749,14 +757,14 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
             .gnu, .gnuthin, .gnu64 => {
                 if (!must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
-                    return error.BadArchive;
+                    self.error_string = try fmt.allocPrint(allocator, "Error parsing archive header name - format of {s} wasn't gnu compatible.", .{trimmed_archive_name});
+                    return ParseError.MalformedArchive;
                 }
             },
             .bsd, .darwin64 => {
                 if (must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't bsd compatible\n", .{trimmed_archive_name});
-                    return error.BadArchive;
+                    self.error_string = try fmt.allocPrint(allocator, "Error parsing archive header name - format of {s} wasn't bsd compatible.", .{trimmed_archive_name});
+                    return ParseError.MalformedArchive;
                 }
             },
             else => {
@@ -782,16 +790,16 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             // Find the end of the string (which is always a newline)
             const end_string_index = mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
-                try stderr.print("Error parsing name in string table, couldn't find terminating character\n", .{});
-                return error.NotArchive;
+                self.error_string = "Error parsing name in string table, couldn't find terminating character.";
+                return ParseError.NotArchive;
             }
             const string_full = string_start[0..end_string_index.?];
 
             // String must have a forward slash before the newline, so check that
             // is there and remove it as well!
             if (string_full[string_full.len - 1] != '/') {
-                try stderr.print("Error parsing name in string table, didn't find '/' before terminating newline\n", .{});
-                return error.NotArchive;
+                self.error_string = "Error parsing name in string table, didn't find '/' before terminating newline.";
+                return ParseError.NotArchive;
             }
 
             // Referencing the slice directly is fine as same bumb allocator is
@@ -805,8 +813,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
-                try stderr.print("Error parsing bsd-style string length\n", .{});
-                return error.NotArchive;
+                self.error_string = "Error parsing bsd-style string length.";
+                return ParseError.NotArchive;
             };
 
             if (is_first) {
@@ -876,8 +884,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     if (is_first) {
         const current_position = try reader.context.getPos();
         if (current_position > magic_string.len) {
-            try stderr.print("Malformed archive contents.\n", .{});
-            return error.MalformedArchive;
+            self.error_string = "Malformed archive contents.";
+            return ParseError.MalformedArchive;
         }
     }
 

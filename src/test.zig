@@ -55,11 +55,9 @@ fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_na
     defer arena.deinit();
 
     var allocator = &arena.allocator;
-    // TODO: pass through custom writer so we can check outputs on error tests
-    const stderr = io.getStdErr().writer();
 
     var archive = try Archive.create(archive_file, archive_name, Archive.ArchiveType.ambiguous, .{});
-    try archive.parse(allocator, stderr);
+    try archive.parse(allocator);
 
     var memory_buffer = try allocator.alloc(u8, 1024 * 1024);
     for (file_names) |file_name, index| {

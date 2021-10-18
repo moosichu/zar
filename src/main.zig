@@ -235,70 +235,49 @@ pub fn main() anyerror!void {
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
+            if (archive.parse(allocator)) {
                 try archive.insertFiles(allocator, files);
                 try archive.finalize(allocator);
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
-            }
+            } else |err| try printParseError(archive, err, stderr);
         },
         .delete => {
             const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
+            if (archive.parse(allocator)) {
                 try archive.deleteFiles(files);
                 try archive.finalize(allocator);
-            } else |err| return err;
+            } else |err| try printParseError(archive, err, stderr);
         },
         .print_names => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
+            if (archive.parse(allocator)) {
                 for (archive.files.items) |parsed_file| {
                     try stdout.print("{s}\n", .{parsed_file.name});
                 }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
-            }
+            } else |err| try printParseError(archive, err, stderr);
         },
         .print_contents => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
+            if (archive.parse(allocator)) {
                 for (archive.files.items) |parsed_file| {
                     try parsed_file.contents.write(stdout, stderr);
                 }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
-            }
+            } else |err| try printParseError(archive, err, stderr);
         },
         .print_symbols => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
+            if (archive.parse(allocator)) {
                 for (archive.symbols.items) |symbol| {
                     if (modifiers.verbose) {
                         if (symbol.file_index == Archive.invalid_file_index) {
@@ -310,18 +289,23 @@ pub fn main() anyerror!void {
                         try stdout.print("{s}\n", .{symbol.name});
                     }
                 }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
-            }
+            } else |err| try printParseError(archive, err, stderr);
         },
         else => {
             std.debug.warn("Operation {} still needs to be implemented!\n", .{operation});
             return error.TODO;
         },
+    }
+}
+
+fn printParseError(archive: Archive, err: anytype, stderr: anytype) !void {
+    switch (err) {
+        // These are errors we know how to handle
+        Archive.ParseError.NotArchive, Archive.ParseError.MalformedArchive => {
+            // archive.parse prints appropriate errors for these messages
+            try stderr.print("{s}\n", .{archive.error_string});
+            return;
+        },
+        else => return err,
     }
 }
