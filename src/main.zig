@@ -60,7 +60,7 @@ const version_details =
 
 pub const full_logging = builtin.mode == .Debug;
 
-pub const log_level: std.log.Level = if (full_logging) .debug else .err;
+pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
 
 // For the release standalone program, we just want to display concise errors
 // to the end-user, but during development we want them to show up as part of
@@ -85,14 +85,16 @@ pub fn log(
     }
 }
 
-fn printError(stderr: anytype, comptime errorString: []const u8) !void {
-    try stderr.print("error: " ++ errorString ++ "\n", .{});
-    try stderr.print(overview, .{});
+// We want to show program overview if invalid argument combination is passed
+// through to the program be the user, we do this often enough that it's worth
+// having a procedure for it.
+fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
+    logger.err(overview ++ "\nShowing help text above as error occured:\n" ++ errorString, args);
 }
 
-fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
+fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const u8) bool {
     if (index >= args.len) {
-        try printError(stderr, "an archive must be specified");
+        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
         return false;
     }
     return true;
@@ -134,7 +136,7 @@ pub fn archiveMain() anyerror!void {
     // Process Options First
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
-        if (!try checkArgsBounds(stderr, args, arg_index)) {
+        if (!checkArgsBounds(args, arg_index, "operation")) {
             return;
         }
 
@@ -183,7 +185,7 @@ pub fn archiveMain() anyerror!void {
         }
     }
 
-    if (!try checkArgsBounds(stderr, args, arg_index)) {
+    if (!checkArgsBounds(args, arg_index, "operation")) {
         return;
     }
 
@@ -192,7 +194,7 @@ pub fn archiveMain() anyerror!void {
         var arg_slice = args[arg_index][0..args[arg_index].len];
         if (arg_slice[0] == '-') {
             if (arg_slice.len == 1) {
-                try printError(stderr, "a valid operation must be provided - only hyphen found");
+                printArgumentError("A valid operation must be provided - only hyphen found.", .{});
                 return;
             }
 
@@ -215,7 +217,7 @@ pub fn archiveMain() anyerror!void {
             'x' => break :operation Archive.Operation.extract,
             'S' => break :operation Archive.Operation.print_symbols,
             else => {
-                try printError(stderr, "a valid operation must be provided");
+                printArgumentError("'{}' is not a valid operation.", .{operation_slice[0]});
                 return;
             },
         }
@@ -241,7 +243,7 @@ pub fn archiveMain() anyerror!void {
 
     arg_index = arg_index + 1;
 
-    if (!try checkArgsBounds(stderr, args, arg_index)) {
+    if (!checkArgsBounds(args, arg_index, "archive")) {
         return;
     }
 
@@ -319,7 +321,7 @@ pub fn archiveMain() anyerror!void {
             }
         },
         else => {
-            std.debug.warn("Operation {} still needs to be implemented!\n", .{operation});
+            logger.err("Operation {} still needs to be implemented!\n", .{operation});
             return error.TODO;
         },
     }
