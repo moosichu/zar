@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
+const logger = std.log.scoped(.archive_main);
 const process = std.process;
 
 const Archive = @import("archive/Archive.zig");
@@ -56,6 +57,33 @@ const version_details =
     \\  host: {s}-{s}-{s}
     \\
 ;
+
+pub const full_logging = builtin.mode == .Debug;
+
+pub const log_level: std.log.Level = if (full_logging) .debug else .err;
+
+// For the release standalone program, we just want to display concise errors
+// to the end-user, but during development we want them to show up as part of
+// the regular logging flow.
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
+
+    const prefix = level.asText() ++ scope_prefix;
+
+    const held = std.debug.getStderrMutex().acquire();
+    defer held.release();
+    const stderr = std.io.getStdErr().writer();
+    if (full_logging) {
+        nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+    } else {
+        nosuspend stderr.print(format ++ "\n", args) catch return;
+    }
+}
 
 fn printError(stderr: anytype, comptime errorString: []const u8) !void {
     try stderr.print("error: " ++ errorString ++ "\n", .{});
