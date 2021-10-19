@@ -85,6 +85,10 @@ fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_w
 }
 
 pub fn main() anyerror!void {
+    archiveMain() catch |err| try handleArchiveError(err);
+}
+
+pub fn archiveMain() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -235,61 +239,56 @@ pub fn main() anyerror!void {
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator)) {
-                try archive.insertFiles(allocator, files);
-                try archive.finalize(allocator);
-            } else |err| try printParseError(archive, err, stderr);
+            try archive.parse(allocator);
+            try archive.insertFiles(allocator, files);
+            try archive.finalize(allocator);
         },
         .delete => {
             const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator)) {
-                try archive.deleteFiles(files);
-                try archive.finalize(allocator);
-            } else |err| try printParseError(archive, err, stderr);
+            try archive.parse(allocator);
+            try archive.deleteFiles(files);
+            try archive.finalize(allocator);
         },
         .print_names => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator)) {
-                for (archive.files.items) |parsed_file| {
-                    try stdout.print("{s}\n", .{parsed_file.name});
-                }
-            } else |err| try printParseError(archive, err, stderr);
+            try archive.parse(allocator);
+            for (archive.files.items) |parsed_file| {
+                try stdout.print("{s}\n", .{parsed_file.name});
+            }
         },
         .print_contents => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator)) {
-                for (archive.files.items) |parsed_file| {
-                    try parsed_file.contents.write(stdout, stderr);
-                }
-            } else |err| try printParseError(archive, err, stderr);
+            try archive.parse(allocator);
+            for (archive.files.items) |parsed_file| {
+                try parsed_file.contents.write(stdout, stderr);
+            }
         },
         .print_symbols => {
             const file = try fs.cwd().openFile(archive_path, .{});
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator)) {
-                for (archive.symbols.items) |symbol| {
-                    if (modifiers.verbose) {
-                        if (symbol.file_index == Archive.invalid_file_index) {
-                            try stdout.print("?: {s}\n", .{symbol.name});
-                        } else {
-                            try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
-                        }
+            try archive.parse(allocator);
+            for (archive.symbols.items) |symbol| {
+                if (modifiers.verbose) {
+                    if (symbol.file_index == Archive.invalid_file_index) {
+                        try stdout.print("?: {s}\n", .{symbol.name});
                     } else {
-                        try stdout.print("{s}\n", .{symbol.name});
+                        try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
                     }
+                } else {
+                    try stdout.print("{s}\n", .{symbol.name});
                 }
-            } else |err| try printParseError(archive, err, stderr);
+            }
         },
         else => {
             std.debug.warn("Operation {} still needs to be implemented!\n", .{operation});
@@ -298,14 +297,16 @@ pub fn main() anyerror!void {
     }
 }
 
-fn printParseError(archive: Archive, err: anytype, stderr: anytype) !void {
+// TODO: systemically work through all errors, put them in an Archive error
+// set so that we know they print appropriate error messages, make this NOT
+// return any error type, and know we have a robust main program alongside
+// a usable API that returns a well-defined set of errors.
+fn handleArchiveError(err: anytype) !void {
     switch (err) {
-        // These are errors we know how to handle
-        Archive.ParseError.NotArchive, Archive.ParseError.MalformedArchive => {
-            // archive.parse prints appropriate errors for these messages
-            try stderr.print("{s}\n", .{archive.error_string});
-            return;
-        },
+        // These are errors which already have appropraite log messages printed
+        Archive.ParseError.NotArchive, Archive.ParseError.MalformedArchive => return,
+        // we bubble-up other errors as they are currently unhandled
+        // TODO: handle these (either at top-level or in parsing method).
         else => return err,
     }
 }
