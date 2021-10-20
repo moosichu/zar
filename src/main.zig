@@ -59,7 +59,7 @@ const version_details =
 ;
 
 pub const full_logging = builtin.mode == .Debug;
-
+pub const debug_errors = builtin.mode == .Debug;
 pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
 
 // For the release standalone program, we just want to display concise errors
@@ -115,7 +115,13 @@ fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_w
 }
 
 pub fn main() anyerror!void {
-    archiveMain() catch |err| try handleArchiveError(err);
+    archiveMain() catch |err| {
+        handleArchiveError(err) catch |e| if (debug_errors) {
+            return e;
+        } else {
+            logger.err("Unknown error occured.", {});
+        };
+    };
 }
 
 pub fn archiveMain() anyerror!void {
@@ -331,7 +337,18 @@ pub fn archiveMain() anyerror!void {
 // set so that we know they print appropriate error messages, make this NOT
 // return any error type, and know we have a robust main program alongside
 // a usable API that returns a well-defined set of errors.
-fn handleArchiveError(err: anytype) !void {
+fn handleArchiveError(err: anyerror) !void {
+    {
+        // we can ignore these errors because we log context specific
+        // information about them at the time that they are thrown.
+        const fields = comptime std.meta.fields(Archive.RuntimeError);
+        inline for (fields) |field| {
+            if (@field(Archive.RuntimeError, field.name) == err) {
+                return;
+            }
+        }
+    }
+
     switch (err) {
         // These are errors which already have appropraite log messages printed
         error.NotArchive => logger.err("Provided file is not an archive.", .{}),
