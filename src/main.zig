@@ -334,9 +334,15 @@ pub fn archiveMain() anyerror!void {
 fn handleArchiveError(err: anytype) !void {
     switch (err) {
         // These are errors which already have appropraite log messages printed
-        Archive.ParseError.NotArchive, Archive.ParseError.MalformedArchive => return,
+        error.NotArchive => logger.err("Provided file is not an archive.", .{}),
+        error.MalformedArchive, error.Overflow, error.InvalidCharacter => logger.err("Malformed archive provided.", .{}),
+        error.OutOfMemory => logger.err("Program ran out of memory.", .{}),
+
+        // TODO: ignore runtime errors as they aren't needed.
         // we bubble-up other errors as they are currently unhandled
         // TODO: handle these (either at top-level or in parsing method).
+        // or have a bug reporting system (or make them not possible by explicitly
+        // covering the union of all errors.
         else => return err,
     }
 }

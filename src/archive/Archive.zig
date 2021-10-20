@@ -59,6 +59,8 @@ pub const Operation = enum {
 pub const ParseError = error{
     NotArchive,
     MalformedArchive,
+    Overflow,
+    InvalidCharacter,
 };
 
 pub const RuntimeError = error{
@@ -91,6 +93,11 @@ pub const RuntimeError = error{
     SharingViolation,
     SymLinkLoop,
     SystemFdQuotaExceeded,
+};
+
+pub const UnhandledError = error{
+    OutOfMemory,
+    TODO,
 };
 
 // All archive files start with this magic string
@@ -609,7 +616,7 @@ fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_
     return err_result;
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator) !void {
+pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || RuntimeError || UnhandledError)!void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
@@ -622,7 +629,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
         }
 
         if (bytes_read < magic_string.len) {
-            logger.err("File too short to be an archive.", .{});
             return ParseError.NotArchive;
         }
 
@@ -632,7 +638,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
-            logger.err("Invalid magic string: expected '{s}' or '{s}', found '{s}'.", .{ magic_string, magic_thin, magic });
             return ParseError.NotArchive;
         }
     }
@@ -667,7 +672,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        logger.err("Came across gnu-style string table in {} archive.", .{self.inferred_archive_type});
                         return ParseError.MalformedArchive;
                     },
                 }
@@ -685,7 +689,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        logger.err("Came across gnu-style symbol table in {} archive.", .{self.inferred_archive_type});
                         return ParseError.MalformedArchive;
                     },
                 }
@@ -709,7 +712,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
 
                 const contents_read = try handleFileIoError(.reading, self.name, reader.read(gnu_symbol_table_contents));
                 if (contents_read < gnu_symbol_table_contents.len) {
-                    logger.err("Unexpected archive EOF when reading symbol table in archive.", .{});
                     return ParseError.MalformedArchive;
                 }
 
@@ -812,13 +814,11 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             },
             .gnu, .gnuthin, .gnu64 => {
                 if (!must_be_gnu) {
-                    logger.err("Error parsing archive header name - format of {s} wasn't gnu compatible.", .{trimmed_archive_name});
                     return ParseError.MalformedArchive;
                 }
             },
             .bsd, .darwin64 => {
                 if (must_be_gnu) {
-                    logger.err("Error parsing archive header name - format of {s} wasn't bsd compatible.", .{trimmed_archive_name});
                     return ParseError.MalformedArchive;
                 }
             },
@@ -845,7 +845,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             // Find the end of the string (which is always a newline)
             const end_string_index = mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
-                logger.err("Error parsing name in string table, couldn't find terminating character.", .{});
                 return ParseError.MalformedArchive;
             }
             const string_full = string_start[0..end_string_index.?];
@@ -853,7 +852,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             // String must have a forward slash before the newline, so check that
             // is there and remove it as well!
             if (string_full[string_full.len - 1] != '/') {
-                logger.err("Error parsing name in string table, didn't find '/' before terminating newline.", .{});
                 return ParseError.MalformedArchive;
             }
 
@@ -867,10 +865,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
         // Make sure that these allocations get properly disposed of later!
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
-            const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
-                logger.err("Error parsing bsd-style string length.", .{});
-                return ParseError.MalformedArchive;
-            };
+            const archive_name_length = try fmt.parseInt(u32, trimmed_archive_name, 10);
 
             if (is_first) {
                 // TODO: make sure this does a check on self.inferred_archive_type!
@@ -940,7 +935,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
     if (is_first) {
         const current_position = try handleFileIoError(.accessing, self.name, reader.context.getPos());
         if (current_position > magic_string.len) {
-            logger.err("Malformed archive contents.", .{});
             return ParseError.MalformedArchive;
         }
     }
