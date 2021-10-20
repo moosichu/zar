@@ -571,8 +571,9 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
 
 fn handleFileIoError(comptime context: []const u8, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
     // TODO: at some point switch on the errors to show more info!
-    _ = err_result catch {
-        logger.err("Error " ++ context ++ " {s}.", .{file_name});
+    _ = err_result catch |err| switch (err) {
+        error.AccessDenied => logger.err("Error " ++ context ++ " {s}, access denied.", .{file_name}),
+        else => logger.err("Error " ++ context ++ " {s}.", .{file_name}),
     };
     return err_result;
 }
