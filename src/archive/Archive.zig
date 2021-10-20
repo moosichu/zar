@@ -74,6 +74,23 @@ pub const RuntimeError = error{
     Unexpected,
     Unseekable,
     WouldBlock,
+    EndOfStream,
+    BadPathName,
+    DeviceBusy,
+    FileLocksNotSupported,
+    FileNotFound,
+    FileTooBig,
+    InvalidUtf8,
+    NameTooLong,
+    NoDevice,
+    NoSpaceLeft,
+    NotDir,
+    PathAlreadyExists,
+    PipeBusy,
+    ProcessFdQuotaExceeded,
+    SharingViolation,
+    SymLinkLoop,
+    SystemFdQuotaExceeded,
 };
 
 // All archive files start with this magic string
@@ -569,22 +586,27 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
-fn handleFileIoError(comptime context: []const u8, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+const ErrorContext = enum {
+    reading,
+    seeking,
+    accessing,
+    opening,
+};
+
+fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: RuntimeError) void {
+    const context_str = @tagName(context);
+
+    switch (err) {
+        error.AccessDenied => logger.err("Error " ++ context_str ++ " {s}, access denied.", .{file_name}),
+        else => logger.err("Error " ++ context_str ++ " {s}.", .{file_name}),
+    }
+    return;
+}
+
+fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
     // TODO: at some point switch on the errors to show more info!
-    _ = err_result catch |err| switch (err) {
-        error.AccessDenied => logger.err("Error " ++ context ++ " {s}, access denied.", .{file_name}),
-        else => logger.err("Error " ++ context ++ " {s}.", .{file_name}),
-    };
+    _ = err_result catch |err| printFileIoError(context, file_name, err);
     return err_result;
-}
-
-fn handleReadError(file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
-    return handleFileIoError("reading", file_name, err_result);
-}
-
-fn handleSeekError(file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
-    // TODO: enforce error type? (i.e. SeekError).
-    return handleFileIoError("seeking", file_name, err_result);
 }
 
 pub fn parse(self: *Archive, allocator: *Allocator) !void {
@@ -592,7 +614,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
-        const bytes_read = try handleReadError(self.name, reader.read(&magic));
+        const bytes_read = try handleFileIoError(.reading, self.name, reader.read(&magic));
 
         if (bytes_read == 0) {
             // Archive is empty and that is ok!
@@ -626,7 +648,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
             const has_line_to_process = result: {
-                const chars_read = try handleReadError(self.name, reader.read(&first_line_buffer));
+                const chars_read = try handleFileIoError(.reading, self.name, reader.read(&first_line_buffer));
 
                 if (chars_read < first_line_buffer.len) {
                     break :result false;
@@ -636,7 +658,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             };
 
             if (!has_line_to_process) {
-                try handleSeekError(self.name, reader.context.seekTo(starting_seek_pos));
+                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
 
@@ -654,9 +676,8 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
                 const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
 
                 string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
-                // TODO: actually error handle not expected number of bytes being read!
-                _ = try reader.read(string_table_contents);
-                // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+
+                try handleFileIoError(.reading, self.name, reader.readNoEof(string_table_contents));
                 break;
             } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
                 has_gnu_symbol_table = true;
@@ -672,13 +693,13 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
                 const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                const num_symbols = try reader.readInt(u32, .Big);
+                const num_symbols = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
 
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
                 for (number_array) |_, number_index| {
-                    number_array[number_index] = try reader.readInt(u32, .Big);
+                    number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
                 }
                 defer allocator.free(number_array);
 
@@ -686,8 +707,11 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
 
                 gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
-                // TODO: actually error handle not expected number of bytes being read!
-                _ = try reader.read(gnu_symbol_table_contents);
+                const contents_read = try handleFileIoError(.reading, self.name, reader.read(gnu_symbol_table_contents));
+                if (contents_read < gnu_symbol_table_contents.len) {
+                    logger.err("Unexpected archive EOF when reading symbol table in archive.", .{});
+                    return ParseError.MalformedArchive;
+                }
 
                 var current_symbol_string = gnu_symbol_table_contents;
                 var current_byte: u32 = 0;
@@ -729,7 +753,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
 
                 starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
             } else {
-                try reader.context.seekTo(starting_seek_pos);
+                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
         }
@@ -741,11 +765,14 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
     defer file_offset_to_index.clearAndFree(allocator);
 
     while (true) {
-        const file_offset = try reader.context.getPos();
+        const file_offset = try handleFileIoError(.accessing, self.name, reader.context.getPos());
 
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
-            else => |e| return e,
+            else => {
+                printFileIoError(.reading, self.name, err);
+                return err;
+            },
         };
 
         // the lifetime of the archive headers will matched that of the parsed files (for now)
@@ -819,7 +846,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             const end_string_index = mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
                 logger.err("Error parsing name in string table, couldn't find terminating character.", .{});
-                return ParseError.NotArchive;
+                return ParseError.MalformedArchive;
             }
             const string_full = string_start[0..end_string_index.?];
 
@@ -827,7 +854,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             // is there and remove it as well!
             if (string_full[string_full.len - 1] != '/') {
                 logger.err("Error parsing name in string table, didn't find '/' before terminating newline.", .{});
-                return ParseError.NotArchive;
+                return ParseError.MalformedArchive;
             }
 
             // Referencing the slice directly is fine as same bumb allocator is
@@ -842,24 +869,25 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
                 logger.err("Error parsing bsd-style string length.", .{});
-                return ParseError.NotArchive;
+                return ParseError.MalformedArchive;
             };
 
             if (is_first) {
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
-                const current_seek_pos = try reader.context.getPos();
+                const current_seek_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
                 var symbol_magic_check_buffer: [bsd_symdef_magic.len]u8 = undefined;
 
-                // TODO: handle not reading enough characters!
-                _ = try reader.read(&symbol_magic_check_buffer);
-                if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
-                    // We have a symbol table!
-                    // TODO: parse symbol table, we just skip it for now...
-                    seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
-                    try reader.context.seekBy(seek_forward_amount);
-                    continue;
+                const chars_read = try reader.read(&symbol_magic_check_buffer);
+                if (chars_read == symbol_magic_check_buffer.len) {
+                    if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
+                        // We have a symbol table!
+                        // TODO: parse symbol table, we just skip it for now...
+                        seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
+                        try reader.context.seekBy(seek_forward_amount);
+                        continue;
+                    }
                 }
 
                 try reader.context.seekTo(current_seek_pos);
@@ -867,8 +895,8 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
 
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 
-            // TODO: proper error handling and length checking here!
-            _ = try reader.read(archive_name_buffer);
+            try handleFileIoError(.reading, self.name, reader.readNoEof(archive_name_buffer));
+
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
             // strip null characters from name - TODO find documentation on this
@@ -894,12 +922,12 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
         };
 
         if (self.inferred_archive_type == .gnuthin) {
-            var thin_file = try std.fs.cwd().openFile(trimmed_archive_name, .{});
+            var thin_file = try handleFileIoError(.opening, trimmed_archive_name, std.fs.cwd().openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
-            try thin_file.reader().readNoEof(parsed_file.contents.bytes);
+            try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
         } else {
-            try reader.readNoEof(parsed_file.contents.bytes);
+            try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
@@ -910,7 +938,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
     }
 
     if (is_first) {
-        const current_position = try reader.context.getPos();
+        const current_position = try handleFileIoError(.accessing, self.name, reader.context.getPos());
         if (current_position > magic_string.len) {
             logger.err("Malformed archive contents.", .{});
             return ParseError.MalformedArchive;
