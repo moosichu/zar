@@ -61,6 +61,21 @@ pub const ParseError = error{
     MalformedArchive,
 };
 
+pub const RuntimeError = error{
+    AccessDenied,
+    BrokenPipe,
+    ConnectionResetByPeer,
+    ConnectionTimedOut,
+    InputOutput,
+    IsDir,
+    NotOpenForReading,
+    OperationAborted,
+    SystemResources,
+    Unexpected,
+    Unseekable,
+    WouldBlock,
+};
+
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
 pub const magic_thin = "!<thin>\n";
@@ -554,12 +569,29 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
+fn handleFileIoError(comptime context: []const u8, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+    // TODO: at some point switch on the errors to show more info!
+    _ = err_result catch {
+        logger.err("Error " ++ context ++ " {s}.", .{file_name});
+    };
+    return err_result;
+}
+
+fn handleReadError(file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+    return handleFileIoError("reading", file_name, err_result);
+}
+
+fn handleSeekError(file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+    // TODO: enforce error type? (i.e. SeekError).
+    return handleFileIoError("seeking", file_name, err_result);
+}
+
 pub fn parse(self: *Archive, allocator: *Allocator) !void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
-        const bytes_read = try reader.read(&magic);
+        const bytes_read = try handleReadError(self.name, reader.read(&magic));
 
         if (bytes_read == 0) {
             // Archive is empty and that is ok!
@@ -593,9 +625,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
             const has_line_to_process = result: {
-                const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
-                    else => |e| return e,
-                };
+                const chars_read = try handleReadError(self.name, reader.read(&first_line_buffer));
 
                 if (chars_read < first_line_buffer.len) {
                     break :result false;
@@ -605,7 +635,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) !void {
             };
 
             if (!has_line_to_process) {
-                try reader.context.seekTo(starting_seek_pos);
+                try handleSeekError(self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
 
