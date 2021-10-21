@@ -124,6 +124,14 @@ pub const Symbol = struct {
     file_index: u64,
 };
 
+// type of ranlib used depends on the archive storage format
+fn Ranlib(comptime storage: type) type {
+    return extern struct {
+        ran_strx: storage, // offset of symbol name in symbol table
+        ran_off: storage,  // offset of file header in archive
+    };
+}
+
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
@@ -823,9 +831,76 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 // TODO: handle not reading enough characters!
                 _ = try reader.read(&symbol_magic_check_buffer);
                 if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
+                    // TODO: BSD symbol table interpretation is architecture dependent,
+                    // is there a way we can interpret this? (will be needed for
+                    // cross-compilation etc. could possibly take it as a spec?)
+                    // Using harcoding this information here is a bit of a hacky
+                    // workaround in the short term - even though it is part of
+                    // the spec.
+                    const IntType = i32;
+                    const endianess = .Big;
+
+                    seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
+
+                    // TODO: error if negative (because spec defines this as a long, so should never be that large?)
+                    const num_ranlib_bytes = try reader.readInt(IntType, endianess);
+                    seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
+
+                    // TODO: error if this doesn't divide properly?
+                    const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
+
+                    try stderr.print("num: {}, size {}\n", .{ num_symbols, num_ranlib_bytes });
+
+                    var ranlib_bytes = try allocator.alloc(u8, @intCast(u32, num_ranlib_bytes));
+
+                    // TODO: error handling
+                    _ = try reader.read(ranlib_bytes);
+                    seek_forward_amount = seek_forward_amount - @intCast(u32, num_ranlib_bytes);
+
+                    var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
+                    for (ranlibs) |*ranlib| {
+                        ranlib.ran_strx = mem.bigToNative(IntType, ranlib.ran_strx);
+                        ranlib.ran_off = mem.bigToNative(IntType, ranlib.ran_off);
+                    }
+
+                    // URGH! Why skip?
+                    // _ = try reader.readInt(u32, endianess);
+
+                    // const symbol_strings_byte_count = try reader.readInt(IntType, endianess);
+                    // seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType)) * 2 ;
+
+                    // try stderr.print("size: {}\n", .{symbol_strings_byte_count});
+
+                    // // // TODO: ensure symbol_strings_byte_count is a valid number!
+
+                    // const symbol_string_bytes = try allocator.alloc(u8, @intCast(u32, symbol_strings_byte_count));
+
+                    // // // TODO: error handling
+                    // _ = try reader.read(symbol_string_bytes);
+                    // seek_forward_amount = seek_forward_amount - @intCast(u32, symbol_strings_byte_count);
+
+                    const cur_pos = try reader.context.getPos();
+                    const symbol_string_bytes = try allocator.alloc(u8, seek_forward_amount);
+                    seek_forward_amount = 0;
+                    _ = try reader.read(symbol_string_bytes);
+
+                    for (ranlibs) |ranlib| {
+                        try stderr.print("ranlib: strx {}, off {}\n", .{ ranlib.ran_strx, ranlib.ran_off });
+                        try stderr.print("cp {}\n", .{cur_pos});
+
+                        // try stderr.print("str: {s}\n", .{symbol_string_bytes[@intCast(u64, ranlib.ran_strx) - cur_pos..]});
+
+                        // const symbol = Symbol{
+                        //     .name = current_symbol_string[0..symbol_length],
+                        //     // Note - we don't set the final file-index here,
+                        //     // we recalculate and override that later in parsing
+                        //     // when we know what they are!
+                        //     .file_index = number_array[self.symbols.items.len],
+                        // };
+                    }
+
                     // We have a symbol table!
                     // TODO: parse symbol table, we just skip it for now...
-                    seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
                     try reader.context.seekBy(seek_forward_amount);
                     continue;
                 }
