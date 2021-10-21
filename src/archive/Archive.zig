@@ -56,6 +56,14 @@ pub const Operation = enum {
     print_symbols,
 };
 
+// We seperate errors into two classes, "handled" and "unhandled".
+// The reason for this is that "handled" errors log appropriate error
+// messages at the point they are created, whereas unhandled errors do
+// not so the caller will need to print appropriate error messages
+// themselves (if needed at all).
+pub const UnhandledError = ParseError || CriticalError;
+pub const HandledError = IoError;
+
 pub const ParseError = error{
     NotArchive,
     MalformedArchive,
@@ -63,7 +71,12 @@ pub const ParseError = error{
     InvalidCharacter,
 };
 
-pub const RuntimeError = error{
+pub const CriticalError = error{
+    OutOfMemory,
+    TODO,
+};
+
+pub const IoError = error{
     AccessDenied,
     BrokenPipe,
     ConnectionResetByPeer,
@@ -93,11 +106,6 @@ pub const RuntimeError = error{
     SharingViolation,
     SymLinkLoop,
     SystemFdQuotaExceeded,
-};
-
-pub const UnhandledError = error{
-    OutOfMemory,
-    TODO,
 };
 
 // All archive files start with this magic string
@@ -176,7 +184,7 @@ const ErrorContext = enum {
     seeking,
 };
 
-pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: RuntimeError) void {
+pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: IoError) void {
     const context_str = @tagName(context);
 
     switch (err) {
@@ -617,7 +625,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || RuntimeError || UnhandledError)!void {
+pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || CriticalError)!void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?

@@ -344,9 +344,9 @@ fn handleArchiveError(err: anyerror) !void {
     {
         // we can ignore these errors because we log context specific
         // information about them at the time that they are thrown.
-        const fields = comptime std.meta.fields(Archive.RuntimeError);
+        const fields = comptime std.meta.fields(Archive.HandledError);
         inline for (fields) |field| {
-            if (@field(Archive.RuntimeError, field.name) == err) {
+            if (@field(Archive.HandledError, field.name) == err) {
                 return;
             }
         }
