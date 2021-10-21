@@ -124,10 +124,14 @@ pub const Symbol = struct {
     file_index: u64,
 };
 
+// These are the defaults llvm ar uses (excepting windows)
+// https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    // TODO: Set this based on the current platform you are using the tool
-    // on!
-    return .gnu;
+    if (builtin.os.tag.isDarwin()) return .bsd;
+    switch (builtin.os.tag) {
+        .windows => return .coff,
+        else => return .gnu,
+    }
 }
 
 pub fn create(
