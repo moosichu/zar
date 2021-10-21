@@ -168,6 +168,30 @@ pub const Symbol = struct {
     file_index: u64,
 };
 
+const ErrorContext = enum {
+    accessing,
+    creating,
+    opening,
+    reading,
+    seeking,
+};
+
+pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: RuntimeError) void {
+    const context_str = @tagName(context);
+
+    switch (err) {
+        error.AccessDenied => logger.err("Error " ++ context_str ++ " {s}, access denied.", .{file_name}),
+        else => logger.err("Error " ++ context_str ++ " {s}.", .{file_name}),
+    }
+    return;
+}
+
+pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+    // TODO: at some point switch on the errors to show more info!
+    _ = err_result catch |err| printFileIoError(context, file_name, err);
+    return err_result;
+}
+
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
     // TODO: Set this based on the current platform you are using the tool
     // on!
@@ -591,29 +615,6 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             try self.files.append(allocator, archived_file);
         }
     }
-}
-
-const ErrorContext = enum {
-    reading,
-    seeking,
-    accessing,
-    opening,
-};
-
-fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: RuntimeError) void {
-    const context_str = @tagName(context);
-
-    switch (err) {
-        error.AccessDenied => logger.err("Error " ++ context_str ++ " {s}, access denied.", .{file_name}),
-        else => logger.err("Error " ++ context_str ++ " {s}.", .{file_name}),
-    }
-    return;
-}
-
-fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
-    // TODO: at some point switch on the errors to show more info!
-    _ = err_result catch |err| printFileIoError(context, file_name, err);
-    return err_result;
 }
 
 pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || RuntimeError || UnhandledError)!void {

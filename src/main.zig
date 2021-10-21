@@ -100,16 +100,19 @@ fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const
     return true;
 }
 
-fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_warning: bool) !fs.File {
+fn openOrCreateFile(archive_path: []u8, print_creation_warning: bool) !fs.File {
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
-                try stderr.print("Warning: creating new archive as none exists at path provided\n", .{});
+                logger.warn("Creating new archive as none exists at path provided\n", .{});
             }
-            const create_file_handle = try fs.cwd().createFile(archive_path, .{ .read = true });
+            const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, fs.cwd().createFile(archive_path, .{ .read = true }));
             return create_file_handle;
         },
-        else => return err,
+        else => {
+            Archive.printFileIoError(.opening, archive_path, err);
+            return err;
+        },
     };
     return open_file_handle;
 }
@@ -271,7 +274,7 @@ pub fn archiveMain() anyerror!void {
 
     switch (operation) {
         .insert => {
-            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
+            const file = try openOrCreateFile(archive_path, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
@@ -280,7 +283,7 @@ pub fn archiveMain() anyerror!void {
             try archive.finalize(allocator);
         },
         .delete => {
-            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
+            const file = try openOrCreateFile(archive_path, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
@@ -289,7 +292,7 @@ pub fn archiveMain() anyerror!void {
             try archive.finalize(allocator);
         },
         .print_names => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
@@ -299,7 +302,7 @@ pub fn archiveMain() anyerror!void {
             }
         },
         .print_contents => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
@@ -309,7 +312,7 @@ pub fn archiveMain() anyerror!void {
             }
         },
         .print_symbols => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
