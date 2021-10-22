@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
+const logger = std.log.scoped(.archive_main);
 const process = std.process;
 
 const Archive = @import("archive/Archive.zig");
@@ -57,34 +58,76 @@ const version_details =
     \\
 ;
 
-fn printError(stderr: anytype, comptime errorString: []const u8) !void {
-    try stderr.print("error: " ++ errorString ++ "\n", .{});
-    try stderr.print(overview, .{});
+pub const full_logging = builtin.mode == .Debug;
+pub const debug_errors = builtin.mode == .Debug;
+pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
+
+// For the release standalone program, we just want to display concise errors
+// to the end-user, but during development we want them to show up as part of
+// the regular logging flow.
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
+
+    const prefix = level.asText() ++ scope_prefix;
+
+    const held = std.debug.getStderrMutex().acquire();
+    defer held.release();
+    const stderr = std.io.getStdErr().writer();
+    if (full_logging) {
+        nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+    } else {
+        nosuspend stderr.print(format ++ "\n", args) catch return;
+    }
 }
 
-fn checkArgsBounds(stderr: anytype, args: anytype, index: u32) !bool {
+// We want to show program overview if invalid argument combination is passed
+// through to the program be the user, we do this often enough that it's worth
+// having a procedure for it.
+fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
+    logger.err(overview ++ "\nShowing help text above as error occured:\n" ++ errorString, args);
+}
+
+fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const u8) bool {
     if (index >= args.len) {
-        try printError(stderr, "an archive must be specified");
+        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
         return false;
     }
     return true;
 }
 
-fn openOrCreateFile(archive_path: []u8, stderr: fs.File.Writer, print_creation_warning: bool) !fs.File {
+fn openOrCreateFile(archive_path: []u8, print_creation_warning: bool) !fs.File {
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
-                try stderr.print("Warning: creating new archive as none exists at path provided\n", .{});
+                logger.warn("Creating new archive as none exists at path provided\n", .{});
             }
-            const create_file_handle = try fs.cwd().createFile(archive_path, .{ .read = true });
+            const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, fs.cwd().createFile(archive_path, .{ .read = true }));
             return create_file_handle;
         },
-        else => return err,
+        else => {
+            Archive.printFileIoError(.opening, archive_path, err);
+            return err;
+        },
     };
     return open_file_handle;
 }
 
 pub fn main() anyerror!void {
+    archiveMain() catch |err| {
+        handleArchiveError(err) catch |e| if (debug_errors) {
+            return e;
+        } else {
+            logger.err("Unknown error occured.", {});
+        };
+    };
+}
+
+pub fn archiveMain() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -102,7 +145,7 @@ pub fn main() anyerror!void {
     // Process Options First
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
-        if (!try checkArgsBounds(stderr, args, arg_index)) {
+        if (!checkArgsBounds(args, arg_index, "operation")) {
             return;
         }
 
@@ -151,7 +194,7 @@ pub fn main() anyerror!void {
         }
     }
 
-    if (!try checkArgsBounds(stderr, args, arg_index)) {
+    if (!checkArgsBounds(args, arg_index, "operation")) {
         return;
     }
 
@@ -160,7 +203,7 @@ pub fn main() anyerror!void {
         var arg_slice = args[arg_index][0..args[arg_index].len];
         if (arg_slice[0] == '-') {
             if (arg_slice.len == 1) {
-                try printError(stderr, "a valid operation must be provided - only hyphen found");
+                printArgumentError("A valid operation must be provided - only hyphen found.", .{});
                 return;
             }
 
@@ -183,7 +226,7 @@ pub fn main() anyerror!void {
             'x' => break :operation Archive.Operation.extract,
             'S' => break :operation Archive.Operation.print_symbols,
             else => {
-                try printError(stderr, "a valid operation must be provided");
+                printArgumentError("'{}' is not a valid operation.", .{operation_slice[0]});
                 return;
             },
         }
@@ -209,7 +252,7 @@ pub fn main() anyerror!void {
 
     arg_index = arg_index + 1;
 
-    if (!try checkArgsBounds(stderr, args, arg_index)) {
+    if (!checkArgsBounds(args, arg_index, "archive")) {
         return;
     }
 
@@ -231,97 +274,95 @@ pub fn main() anyerror!void {
 
     switch (operation) {
         .insert => {
-            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
+            const file = try openOrCreateFile(archive_path, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
-                try archive.insertFiles(allocator, files);
-                try archive.finalize(allocator);
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
-            }
+            try archive.parse(allocator);
+            try archive.insertFiles(allocator, files);
+            try archive.finalize(allocator);
         },
         .delete => {
-            const file = try openOrCreateFile(archive_path, stderr, !modifiers.create);
+            const file = try openOrCreateFile(archive_path, !modifiers.create);
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
-                try archive.deleteFiles(files);
-                try archive.finalize(allocator);
-            } else |err| return err;
+            try archive.parse(allocator);
+            try archive.deleteFiles(files);
+            try archive.finalize(allocator);
         },
         .print_names => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
-                for (archive.files.items) |parsed_file| {
-                    try stdout.print("{s}\n", .{parsed_file.name});
-                }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
+            try archive.parse(allocator);
+            for (archive.files.items) |parsed_file| {
+                try stdout.print("{s}\n", .{parsed_file.name});
             }
         },
         .print_contents => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
-                for (archive.files.items) |parsed_file| {
-                    try parsed_file.contents.write(stdout, stderr);
-                }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
+            try archive.parse(allocator);
+            for (archive.files.items) |parsed_file| {
+                try parsed_file.contents.write(stdout, stderr);
             }
         },
         .print_symbols => {
-            const file = try fs.cwd().openFile(archive_path, .{});
+            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
             defer file.close();
 
             var archive = try Archive.create(file, archive_path, archive_type, modifiers);
-            if (archive.parse(allocator, stderr)) {
-                for (archive.symbols.items) |symbol| {
-                    if (modifiers.verbose) {
-                        if (symbol.file_index == Archive.invalid_file_index) {
-                            try stdout.print("?: {s}\n", .{symbol.name});
-                        } else {
-                            try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
-                        }
+            try archive.parse(allocator);
+            for (archive.symbols.items) |symbol| {
+                if (modifiers.verbose) {
+                    if (symbol.file_index == Archive.invalid_file_index) {
+                        try stdout.print("?: {s}\n", .{symbol.name});
                     } else {
-                        try stdout.print("{s}\n", .{symbol.name});
+                        try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
                     }
+                } else {
+                    try stdout.print("{s}\n", .{symbol.name});
                 }
-            } else |err| switch (err) {
-                // These are errors we know how to handle
-                error.NotArchive, error.MalformedArchive => {
-                    // archive.parse prints appropriate errors for these messages
-                    return;
-                },
-                else => return err,
             }
         },
         else => {
-            std.debug.warn("Operation {} still needs to be implemented!\n", .{operation});
+            logger.err("Operation {} still needs to be implemented!\n", .{operation});
             return error.TODO;
         },
+    }
+}
+
+// TODO: systemically work through all errors, put them in an Archive error
+// set so that we know they print appropriate error messages, make this NOT
+// return any error type, and know we have a robust main program alongside
+// a usable API that returns a well-defined set of errors.
+fn handleArchiveError(err: anyerror) !void {
+    {
+        // we can ignore these errors because we log context specific
+        // information about them at the time that they are thrown.
+        const fields = comptime std.meta.fields(Archive.HandledError);
+        inline for (fields) |field| {
+            if (@field(Archive.HandledError, field.name) == err) {
+                return;
+            }
+        }
+    }
+
+    switch (err) {
+        // These are errors which already have appropraite log messages printed
+        error.NotArchive => logger.err("Provided file is not an archive.", .{}),
+        error.MalformedArchive, error.Overflow, error.InvalidCharacter => logger.err("Malformed archive provided.", .{}),
+        error.OutOfMemory => logger.err("Program ran out of memory.", .{}),
+
+        // TODO: ignore runtime errors as they aren't needed.
+        // we bubble-up other errors as they are currently unhandled
+        // TODO: handle these (either at top-level or in parsing method).
+        // or have a bug reporting system (or make them not possible by explicitly
+        // covering the union of all errors.
+        else => return err,
     }
 }
