@@ -473,6 +473,25 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
     for (file_names) |file_name| {
         for (self.files.items) |file, index| {
             if (std.mem.eql(u8, file.name, file_name)) {
+                // Remove all the symbols associated with the file
+                // when file is deleted
+                var idx: usize = 0;
+                while (idx < self.symbols.items.len) {
+                    const sym = self.symbols.items[idx];
+                    if (sym.file_index == index) {
+                        _ = self.symbols.orderedRemove(idx);
+                        continue;
+                    }
+                    idx += 1;
+                }
+                
+                // Reset the index for all future symbols
+                for (self.symbols.items) |*sym| {
+                    if (sym.file_index > index) {
+                        sym.file_index -= 1;
+                    }
+                }
+                
                 _ = self.files.orderedRemove(index);
                 break;
             }
