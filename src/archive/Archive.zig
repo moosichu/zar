@@ -254,6 +254,17 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
+    
+    // Symbol sorting function
+    const SortFn = struct {
+        fn sorter(context: void, x: Symbol, y: Symbol) bool {
+            _ = context;
+            return std.mem.lessThan(u8, x.name, y.name);
+        }        
+    };
+    
+    // Sort the symbols
+    std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
 
     // Create common symbol table information
     var symbol_count: u32 = 0;
