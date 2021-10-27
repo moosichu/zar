@@ -244,6 +244,7 @@ pub fn archiveMain() anyerror!void {
                 'v' => modifiers.verbose = true,
                 's' => modifiers.build_symbol_table = true,
                 'S' => modifiers.build_symbol_table = false,
+                'o' => modifiers.sort_symbol_table = true,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }

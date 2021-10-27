@@ -146,6 +146,7 @@ pub const Modifiers = extern struct {
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
+    sort_symbol_table: bool = true,
     verbose: bool = false,
 };
 
@@ -264,8 +265,10 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     };
     
     // Sort the symbols
-    std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
-
+    if (self.modifiers.sort_symbol_table) {
+        std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
+    }
+        
     // Create common symbol table information
     var symbol_count: u32 = 0;
     var symbol_table = std.ArrayList(u8).init(allocator);
