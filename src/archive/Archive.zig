@@ -358,7 +358,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     for (symbol_offset.items) |off| {
                         // zig fmt: off
                         const local_offset =
-                            @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
+                            1 + @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
                             if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
                         // zig fmt: on
 
