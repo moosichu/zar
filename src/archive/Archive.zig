@@ -255,50 +255,49 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
-    
+
     // Symbol sorting function
     const SortFn = struct {
         fn sorter(context: void, x: Symbol, y: Symbol) bool {
             _ = context;
             return std.mem.lessThan(u8, x.name, y.name);
-        }        
+        }
     };
-    
+
     // Sort the symbols
     if (self.modifiers.sort_symbol_table) {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
-        
-    // Create common symbol table information
-    var symbol_count: u32 = 0;
+
+    // Calculate common symbol table information
+    const RanlibSymbol = struct {
+        file_offset: u32,
+        string_offset: u32,
+    };
+
+    var symbols = try allocator.alloc(RanlibSymbol, self.symbols.items.len);
+    defer allocator.free(symbols);
+
     var symbol_table = std.ArrayList(u8).init(allocator);
-    var symbol_offset = std.ArrayList(u32).init(allocator);
-    var symbol_string_offset = std.ArrayList(u32).init(allocator);
     defer symbol_table.deinit();
-    defer symbol_offset.deinit();
-    defer symbol_string_offset.deinit();
 
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
     var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
-    var file_offset = std.ArrayList(u32).init(allocator);
-    defer file_offset.deinit();
+    const file_offset = try allocator.alloc(u32, self.files.items.len);
+    defer allocator.free(file_offset);
 
-    for (self.files.items) |file| {
-        try file_offset.append(offset);
-
+    for (self.files.items) |file, idx| {
+        file_offset[idx] = offset;
         offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
     }
 
-    for (self.symbols.items) |symbol| {
-        try symbol_string_offset.append(@intCast(u32, symbol_table.items.len));
-
+    for (self.symbols.items) |symbol, idx| {
         try symbol_table.appendSlice(symbol.name);
         try symbol_table.append(0);
 
-        try symbol_offset.append(file_offset.items[symbol.file_index]);
-
-        symbol_count += 1;
+        symbols[idx].string_offset = @intCast(u32, symbol_table.items.len);
+        symbols[idx].file_offset = file_offset[symbol.file_index];
     }
 
     switch (self.output_archive_type) {
@@ -338,7 +337,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     const format = self.output_archive_type;
 
                     const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
-                    const symbol_table_size = symbol_table.items.len + (symbol_offset.items.len * int_size) + int_size;
+                    const symbol_table_size = symbol_table.items.len + (symbols.len * int_size) + int_size;
 
                     try writer.print(Header.format_string, .{
                         allocator.dupe(u8, if (format == .gnu64) "/SYM64/" else "/"),
@@ -350,12 +349,12 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     });
 
                     if (format == .gnu64) {
-                        try writer.writeIntBig(u64, symbol_count);
+                        try writer.writeIntBig(u64, @intCast(u64, symbols.len));
                     } else {
-                        try writer.writeIntBig(u32, symbol_count);
+                        try writer.writeIntBig(u32, @intCast(u32, symbols.len));
                     }
 
-                    for (symbol_offset.items) |off| {
+                    for (symbols) |sym| {
                         // zig fmt: off
                         const local_offset =
                             1 + @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
@@ -363,9 +362,9 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                         // zig fmt: on
 
                         if (format == .gnu64) {
-                            try writer.writeIntBig(u64, off + @intCast(u64, local_offset));
+                            try writer.writeIntBig(u64, sym.file_offset + @intCast(u64, local_offset));
                         } else {
-                            try writer.writeIntBig(u32, off + @intCast(u32, local_offset));
+                            try writer.writeIntBig(u32, sym.file_offset + @intCast(u32, local_offset));
                         }
                     }
 
@@ -391,7 +390,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 const format = self.output_archive_type;
                 const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
 
-                const ranlib_size = symbol_count * (int_size * 2);
+                const ranlib_size = symbols.len * (int_size * 2);
                 const symbol_table_size =
                     12 + // Size of name
                     int_size + // Int describing the size of ranlib
@@ -418,15 +417,15 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
                 }
 
-                for (symbol_string_offset.items) |off, i| {
+                for (symbols) |sym| {
                     const local_offset = @sizeOf(Header) + symbol_table_size;
-                    const solved_offset = local_offset + symbol_offset.items[i];
+                    const solved_offset = local_offset + sym.file_offset;
 
                     if (format == .darwin64) {
-                        try writer.writeInt(u64, off, endian);
+                        try writer.writeInt(u64, sym.string_offset, endian);
                         try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
                     } else {
-                        try writer.writeInt(u32, off, endian);
+                        try writer.writeInt(u32, sym.string_offset, endian);
                         try writer.writeInt(u32, @intCast(u32, solved_offset), endian);
                     }
                 }
@@ -498,14 +497,14 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
                     }
                     idx += 1;
                 }
-                
+
                 // Reset the index for all future symbols
                 for (self.symbols.items) |*sym| {
                     if (sym.file_index > index) {
                         sym.file_index -= 1;
                     }
                 }
-                
+
                 _ = self.files.orderedRemove(index);
                 break;
             }
@@ -647,13 +646,12 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                                 try self.symbols.append(allocator, symbol);
                             }
                         }
-                    }
-                    else {
+                    } else {
                         var coff_file = Coff{ .file = file, .name = file_name };
                         defer coff_file.deinit(allocator);
-                        
+
                         coff_file.parse(allocator, builtin.target) catch |err| return err;
-                        
+
                         for (coff_file.symtab.items) |sym| {
                             if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
                                 const symbol = Symbol{
