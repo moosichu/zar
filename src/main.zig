@@ -42,6 +42,10 @@ const overview =
     \\ U - Use real timestamps, GIDS and UIDs for archived files.
     \\ v - Print verbose output, depending on opertion:
     \\     S: show file names that symbols belong to.
+    \\ s - Generate symbol table
+    \\ S - Do not generate symbol table
+    \\ r - Create sorted symbol table
+    \\ R - Do not create sorted symbol table
     \\
     \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
@@ -244,6 +248,8 @@ pub fn archiveMain() anyerror!void {
                 'v' => modifiers.verbose = true,
                 's' => modifiers.build_symbol_table = true,
                 'S' => modifiers.build_symbol_table = false,
+                'r' => modifiers.sort_symbol_table = true,
+                'R' => modifiers.sort_symbol_table = false,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }

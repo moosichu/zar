@@ -146,6 +146,7 @@ pub const Modifiers = extern struct {
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
+    sort_symbol_table: bool = true,
     verbose: bool = false,
 };
 
@@ -254,7 +255,20 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
-
+    
+    // Symbol sorting function
+    const SortFn = struct {
+        fn sorter(context: void, x: Symbol, y: Symbol) bool {
+            _ = context;
+            return std.mem.lessThan(u8, x.name, y.name);
+        }        
+    };
+    
+    // Sort the symbols
+    if (self.modifiers.sort_symbol_table) {
+        std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
+    }
+        
     // Create common symbol table information
     var symbol_count: u32 = 0;
     var symbol_table = std.ArrayList(u8).init(allocator);
