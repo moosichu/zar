@@ -5,11 +5,13 @@ const std = @import("std");
 const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
-const log = std.log.scoped(.archive);
+const logger = std.log.scoped(.archive);
 const elf = std.elf;
 const Elf = @import("../link/Elf/Object.zig");
 const MachO = @import("../link/MachO/Object.zig");
 const macho = std.macho;
+const Coff = @import("../link/Coff/Object.zig");
+const coff = std.coff;
 
 const Allocator = std.mem.Allocator;
 
@@ -56,6 +58,58 @@ pub const Operation = enum {
     print_symbols,
 };
 
+// We seperate errors into two classes, "handled" and "unhandled".
+// The reason for this is that "handled" errors log appropriate error
+// messages at the point they are created, whereas unhandled errors do
+// not so the caller will need to print appropriate error messages
+// themselves (if needed at all).
+pub const UnhandledError = ParseError || CriticalError;
+pub const HandledError = IoError;
+
+pub const ParseError = error{
+    NotArchive,
+    MalformedArchive,
+    Overflow,
+    InvalidCharacter,
+};
+
+pub const CriticalError = error{
+    OutOfMemory,
+    TODO,
+};
+
+pub const IoError = error{
+    AccessDenied,
+    BrokenPipe,
+    ConnectionResetByPeer,
+    ConnectionTimedOut,
+    InputOutput,
+    IsDir,
+    NotOpenForReading,
+    OperationAborted,
+    SystemResources,
+    Unexpected,
+    Unseekable,
+    WouldBlock,
+    EndOfStream,
+    BadPathName,
+    DeviceBusy,
+    FileLocksNotSupported,
+    FileNotFound,
+    FileTooBig,
+    InvalidUtf8,
+    NameTooLong,
+    NoDevice,
+    NoSpaceLeft,
+    NotDir,
+    PathAlreadyExists,
+    PipeBusy,
+    ProcessFdQuotaExceeded,
+    SharingViolation,
+    SymLinkLoop,
+    SystemFdQuotaExceeded,
+};
+
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
 pub const magic_thin = "!<thin>\n";
@@ -92,6 +146,7 @@ pub const Modifiers = extern struct {
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
+    sort_symbol_table: bool = true,
     verbose: bool = false,
 };
 
@@ -130,6 +185,30 @@ fn Ranlib(comptime storage: type) type {
         ran_strx: storage, // offset of symbol name in symbol table
         ran_off: storage, // offset of file header in archive
     };
+}
+
+const ErrorContext = enum {
+    accessing,
+    creating,
+    opening,
+    reading,
+    seeking,
+};
+
+pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: IoError) void {
+    const context_str = @tagName(context);
+
+    switch (err) {
+        error.AccessDenied => logger.err("Error " ++ context_str ++ " {s}, access denied.", .{file_name}),
+        else => logger.err("Error " ++ context_str ++ " {s}.", .{file_name}),
+    }
+    return;
+}
+
+pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
+    // TODO: at some point switch on the errors to show more info!
+    _ = err_result catch |err| printFileIoError(context, file_name, err);
+    return err_result;
 }
 
 // These are the defaults llvm ar uses (excepting windows)
@@ -184,6 +263,19 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
+
+    // Symbol sorting function
+    const SortFn = struct {
+        fn sorter(context: void, x: Symbol, y: Symbol) bool {
+            _ = context;
+            return std.mem.lessThan(u8, x.name, y.name);
+        }
+    };
+
+    // Sort the symbols
+    if (self.modifiers.sort_symbol_table) {
+        std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
+    }
 
     // Create common symbol table information
     var symbol_count: u32 = 0;
@@ -403,6 +495,25 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
     for (file_names) |file_name| {
         for (self.files.items) |file, index| {
             if (std.mem.eql(u8, file.name, file_name)) {
+                // Remove all the symbols associated with the file
+                // when file is deleted
+                var idx: usize = 0;
+                while (idx < self.symbols.items.len) {
+                    const sym = self.symbols.items[idx];
+                    if (sym.file_index == index) {
+                        _ = self.symbols.orderedRemove(idx);
+                        continue;
+                    }
+                    idx += 1;
+                }
+
+                // Reset the index for all future symbols
+                for (self.symbols.items) |*sym| {
+                    if (sym.file_index > index) {
+                        sym.file_index -= 1;
+                    }
+                }
+
                 _ = self.files.orderedRemove(index);
                 break;
             }
@@ -544,6 +655,21 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                                 try self.symbols.append(allocator, symbol);
                             }
                         }
+                    } else {
+                        var coff_file = Coff{ .file = file, .name = file_name };
+                        defer coff_file.deinit(allocator);
+
+                        coff_file.parse(allocator, builtin.target) catch |err| return err;
+
+                        for (coff_file.symtab.items) |sym| {
+                            if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
+                                const symbol = Symbol{
+                                    .name = try allocator.dupe(u8, sym.getName(&coff_file)),
+                                    .file_index = self.files.items.len,
+                                };
+                                try self.symbols.append(allocator, symbol);
+                            }
+                        }
                     }
                 }
             }
@@ -561,12 +687,12 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
+pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || CriticalError)!void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
-        const bytes_read = try reader.read(&magic);
+        const bytes_read = try handleFileIoError(.reading, self.name, reader.read(&magic));
 
         if (bytes_read == 0) {
             // Archive is empty and that is ok!
@@ -574,8 +700,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         }
 
         if (bytes_read < magic_string.len) {
-            try stderr.print("File too short to be an archive\n", .{});
-            return error.NotArchive;
+            return ParseError.NotArchive;
         }
 
         const is_thin_archive = mem.eql(u8, &magic, magic_thin);
@@ -584,8 +709,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             self.inferred_archive_type = .gnuthin;
 
         if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
-            try stderr.print("Invalid magic string: expected '{s}' or '{s}', found '{s}'\n", .{ magic_string, magic_thin, magic });
-            return error.NotArchive;
+            return ParseError.NotArchive;
         }
     }
 
@@ -600,9 +724,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
             const has_line_to_process = result: {
-                const chars_read = reader.read(&first_line_buffer) catch |err| switch (err) {
-                    else => |e| return e,
-                };
+                const chars_read = try handleFileIoError(.reading, self.name, reader.read(&first_line_buffer));
 
                 if (chars_read < first_line_buffer.len) {
                     break :result false;
@@ -612,7 +734,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             };
 
             if (!has_line_to_process) {
-                try reader.context.seekTo(starting_seek_pos);
+                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
 
@@ -621,8 +743,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        try stderr.print("Came across gnu-style string table in {} archive\n", .{self.inferred_archive_type});
-                        return error.NotArchive;
+                        return ParseError.MalformedArchive;
                     },
                 }
 
@@ -630,9 +751,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                 const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
 
                 string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
-                // TODO: actually error handle not expected number of bytes being read!
-                _ = try reader.read(string_table_contents);
-                // starting_seek_pos = starting_seek_pos + first_line_buffer.len + table_size;
+
+                try handleFileIoError(.reading, self.name, reader.readNoEof(string_table_contents));
                 break;
             } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
                 has_gnu_symbol_table = true;
@@ -640,21 +760,20 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
                     else => {
-                        try stderr.print("Came across gnu-style symbol table in {} archive\n", .{self.inferred_archive_type});
-                        return error.NotArchive;
+                        return ParseError.MalformedArchive;
                     },
                 }
 
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
                 const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                const num_symbols = try reader.readInt(u32, .Big);
+                const num_symbols = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
 
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
                 for (number_array) |_, number_index| {
-                    number_array[number_index] = try reader.readInt(u32, .Big);
+                    number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
                 }
                 defer allocator.free(number_array);
 
@@ -662,8 +781,10 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                 gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
-                // TODO: actually error handle not expected number of bytes being read!
-                _ = try reader.read(gnu_symbol_table_contents);
+                const contents_read = try handleFileIoError(.reading, self.name, reader.read(gnu_symbol_table_contents));
+                if (contents_read < gnu_symbol_table_contents.len) {
+                    return ParseError.MalformedArchive;
+                }
 
                 var current_symbol_string = gnu_symbol_table_contents;
                 var current_byte: u32 = 0;
@@ -705,7 +826,7 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
                 starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
             } else {
-                try reader.context.seekTo(starting_seek_pos);
+                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
         }
@@ -717,11 +838,14 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     defer file_offset_to_index.clearAndFree(allocator);
 
     while (true) {
-        const file_offset = try reader.context.getPos();
+        const file_offset = try handleFileIoError(.accessing, self.name, reader.context.getPos());
 
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
-            else => |e| return e,
+            else => {
+                printFileIoError(.reading, self.name, err);
+                return err;
+            },
         };
 
         // the lifetime of the archive headers will matched that of the parsed files (for now)
@@ -761,14 +885,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             },
             .gnu, .gnuthin, .gnu64 => {
                 if (!must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't gnu compatible\n", .{trimmed_archive_name});
-                    return error.BadArchive;
+                    return ParseError.MalformedArchive;
                 }
             },
             .bsd, .darwin64 => {
                 if (must_be_gnu) {
-                    try stderr.print("Error parsing archive header name - format of {s} wasn't bsd compatible\n", .{trimmed_archive_name});
-                    return error.BadArchive;
+                    return ParseError.MalformedArchive;
                 }
             },
             else => {
@@ -794,16 +916,14 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
             // Find the end of the string (which is always a newline)
             const end_string_index = mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
-                try stderr.print("Error parsing name in string table, couldn't find terminating character\n", .{});
-                return error.NotArchive;
+                return ParseError.MalformedArchive;
             }
             const string_full = string_start[0..end_string_index.?];
 
             // String must have a forward slash before the newline, so check that
             // is there and remove it as well!
             if (string_full[string_full.len - 1] != '/') {
-                try stderr.print("Error parsing name in string table, didn't find '/' before terminating newline\n", .{});
-                return error.NotArchive;
+                return ParseError.MalformedArchive;
             }
 
             // Referencing the slice directly is fine as same bumb allocator is
@@ -816,21 +936,19 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         // Make sure that these allocations get properly disposed of later!
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
-            const archive_name_length = fmt.parseInt(u32, trimmed_archive_name, 10) catch {
-                try stderr.print("Error parsing bsd-style string length\n", .{});
-                return error.NotArchive;
-            };
+            const archive_name_length = try fmt.parseInt(u32, trimmed_archive_name, 10);
 
             if (is_first) {
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
-                const current_seek_pos = try reader.context.getPos();
+                const current_seek_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
                 var symbol_magic_check_buffer: [bsd_symdef_magic.len]u8 = undefined;
 
                 // TODO: handle not reading enough characters!
-                _ = try reader.read(&symbol_magic_check_buffer);
-                if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
+                const chars_read = try reader.read(&symbol_magic_check_buffer);
+
+                if (chars_read == symbol_magic_check_buffer.len and mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
                     // TODO: BSD symbol table interpretation is architecture dependent,
                     // is there a way we can interpret this? (will be needed for
                     // cross-compilation etc. could possibly take it as a spec?)
@@ -868,7 +986,6 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
                     // later?
                     _ = symbol_strings_length;
                     // try stderr.print("symbols length {}\n", .{symbol_strings_length});
-
 
                     seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
 
@@ -909,8 +1026,8 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
 
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 
-            // TODO: proper error handling and length checking here!
-            _ = try reader.read(archive_name_buffer);
+            try handleFileIoError(.reading, self.name, reader.readNoEof(archive_name_buffer));
+
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
             // strip null characters from name - TODO find documentation on this
@@ -936,12 +1053,12 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
         };
 
         if (self.inferred_archive_type == .gnuthin) {
-            var thin_file = try std.fs.cwd().openFile(trimmed_archive_name, .{});
+            var thin_file = try handleFileIoError(.opening, trimmed_archive_name, std.fs.cwd().openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
-            try thin_file.reader().readNoEof(parsed_file.contents.bytes);
+            try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
         } else {
-            try reader.readNoEof(parsed_file.contents.bytes);
+            try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
@@ -952,10 +1069,9 @@ pub fn parse(self: *Archive, allocator: *Allocator, stderr: anytype) !void {
     }
 
     if (is_first) {
-        const current_position = try reader.context.getPos();
+        const current_position = try handleFileIoError(.accessing, self.name, reader.context.getPos());
         if (current_position > magic_string.len) {
-            try stderr.print("Malformed archive contents.\n", .{});
-            return error.MalformedArchive;
+            return ParseError.MalformedArchive;
         }
     }
 
