@@ -335,18 +335,16 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                         try symbol_table.append(0);
 
                     const format = self.output_archive_type;
-
                     const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
-                    const symbol_table_size = symbol_table.items.len + (symbols.len * int_size) + int_size;
 
-                    try writer.print(Header.format_string, .{
-                        allocator.dupe(u8, if (format == .gnu64) "/SYM64/" else "/"),
-                        0,
-                        0,
-                        0,
-                        0,
-                        symbol_table_size,
-                    });
+                    const symbol_table_size =
+                        symbol_table.items.len + // The string of symbols
+                        (symbols.len * int_size) + // Size of all symbol offsets
+                        int_size; // Value denoting the length of symbol table
+
+                    const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
+
+                    try writer.print(Header.format_string, .{ magic, 0, 0, 0, 0, symbol_table_size });
 
                     if (format == .gnu64) {
                         try writer.writeIntBig(u64, @intCast(u64, symbols.len));
@@ -357,7 +355,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     for (symbols) |sym| {
                         // zig fmt: off
                         const local_offset =
-                            1 + @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
+                            @sizeOf(Header) + symbol_table_size + 1 + // Size of symbol table itself
                             if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
                         // zig fmt: on
 
@@ -390,22 +388,17 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 const format = self.output_archive_type;
                 const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
 
+                const bsd_name_len = 12; // Length of "__.SYMDEF_64"
+
                 const ranlib_size = symbols.len * (int_size * 2);
                 const symbol_table_size =
-                    12 + // Size of name
+                    bsd_name_len + // Length of name
                     int_size + // Int describing the size of ranlib
                     ranlib_size + // Size of ranlib structs
                     int_size + // Int describing size of symbol table's strings
                     symbol_table.items.len; // The lengths of strings themselves
 
-                try writer.print(Header.format_string, .{
-                    "#1/12",
-                    0,
-                    0,
-                    0,
-                    0,
-                    symbol_table_size,
-                });
+                try writer.print(Header.format_string, .{ "#1/12", 0, 0, 0, 0, symbol_table_size });
 
                 const endian = builtin.cpu.arch.endian();
 
