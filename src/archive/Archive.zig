@@ -938,6 +938,9 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = try fmt.parseInt(u32, trimmed_archive_name, 10);
 
+            // TODO: go through int casts & don't assume that they will just work, add defensive error checking
+            // for them. (an internal checked cast or similar).
+
             if (is_first) {
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
@@ -967,8 +970,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     // TODO: error if this doesn't divide properly?
                     // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
 
-                    // try stderr.print("num: {}, size {}\n", .{ num_symbols, num_ranlib_bytes });
-
                     var ranlib_bytes = try allocator.alloc(u8, @intCast(u32, num_ranlib_bytes));
 
                     // TODO: error handling
@@ -985,7 +986,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     // TODO: We don't really need this information, but maybe it could come in handy
                     // later?
                     _ = symbol_strings_length;
-                    // try stderr.print("symbols length {}\n", .{symbol_strings_length});
 
                     seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
 
@@ -996,13 +996,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     const trimmed_symbol_string_bytes = mem.trim(u8, symbol_string_bytes, "\x00");
 
                     for (ranlibs) |ranlib| {
-                        // try stderr.print("ranlib: strx {}, off {}\n", .{ ranlib.ran_strx, ranlib.ran_off });
                         const symbol_string = mem.sliceTo(trimmed_symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
-                        // try stderr.print("symbols {s}\n", .{trimmed_symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..]});
-                        // try stderr.print("symbol {s}\n", .{symbol_string});
-                        // _ = symbol;
-
-                        // try stderr.print("str: {s}\n", .{symbol_string_bytes[@intCast(u64, ranlib.ran_strx) - cur_pos..]});
 
                         const symbol = Symbol{
                             .name = symbol_string,
