@@ -594,6 +594,8 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                 .uid = uid,
             },
         };
+        
+        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len; 
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
@@ -615,7 +617,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                                 if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
                                     const symbol = Symbol{
                                         .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
-                                        .file_index = self.files.items.len,
+                                        .file_index = file_index,
                                     };
                                     try self.symbols.append(allocator, symbol);
                                 }
@@ -639,7 +641,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                             if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
                                 const symbol = Symbol{
                                     .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
-                                    .file_index = self.files.items.len,
+                                    .file_index = file_index,
                                 };
                                 try self.symbols.append(allocator, symbol);
                             }
@@ -654,7 +656,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                             if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
                                 const symbol = Symbol{
                                     .name = try allocator.dupe(u8, sym.getName(&coff_file)),
-                                    .file_index = self.files.items.len,
+                                    .file_index = file_index,
                                 };
                                 try self.symbols.append(allocator, symbol);
                             }
