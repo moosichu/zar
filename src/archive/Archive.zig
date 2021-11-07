@@ -268,6 +268,8 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     if (self.modifiers.sort_symbol_table) {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
+    
+    const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
 
     // Calculate common symbol table information
     const RanlibSymbol = struct {
@@ -290,13 +292,18 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     for (self.files.items) |file, idx| {
         file_offset[idx] = offset;
         offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+        
+        // BSD also keeps the name in its data section
+        if (is_bsd)
+            offset += @intCast(u32, file.name.len);
     }
 
     for (self.symbols.items) |symbol, idx| {
+        symbols[idx].string_offset = @intCast(u32, symbol_table.items.len);
+        
         try symbol_table.appendSlice(symbol.name);
         try symbol_table.append(0);
 
-        symbols[idx].string_offset = @intCast(u32, symbol_table.items.len);
         symbols[idx].file_offset = file_offset[symbol.file_index];
     }
 
@@ -355,7 +362,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     for (symbols) |sym| {
                         // zig fmt: off
                         const local_offset =
-                            @sizeOf(Header) + symbol_table_size + 1 + // Size of symbol table itself
+                            @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
                             if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
                         // zig fmt: on
 
@@ -409,11 +416,11 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     try writer.writeAll("__.SYMDEF\x00\x00\x00");
                     try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
                 }
-
+                
                 for (symbols) |sym| {
                     const local_offset = @sizeOf(Header) + symbol_table_size;
                     const solved_offset = local_offset + sym.file_offset;
-
+                    
                     if (format == .darwin64) {
                         try writer.writeInt(u64, sym.string_offset, endian);
                         try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
@@ -438,8 +445,6 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         },
         else => unreachable,
     }
-
-    const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
 
     // Write the files
     for (self.files.items) |file, index| {
