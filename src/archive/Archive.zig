@@ -407,11 +407,9 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 const format = self.output_archive_type;
                 const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
 
-                const bsd_name_len = 12; // Length of "__.SYMDEF_64"
-
                 const ranlib_size = symbols.len * (int_size * 2);
                 const symbol_table_size =
-                    bsd_name_len + // Length of name
+                    bsd_symdef_64_magic.len + // Length of name
                     int_size + // Int describing the size of ranlib
                     ranlib_size + // Size of ranlib structs
                     int_size + // Int describing size of symbol table's strings
