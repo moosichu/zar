@@ -121,6 +121,10 @@ pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_l
 // BSD constants
 pub const bsd_name_length_signifier = "#1/";
 pub const bsd_symdef_magic = "__.SYMDEF";
+pub const bsd_symdef_64_magic = "__.SYMDEF_64";
+pub const bsd_symdef_sorted_magic = "__.SYMDEF SORTED";
+
+pub const bsd_symdef_longest_magic = std.math.max(std.math.max(bsd_symdef_magic.len, bsd_symdef_64_magic.len), bsd_symdef_sorted_magic.len);
 
 pub const invalid_file_index = std.math.maxInt(u64);
 
@@ -419,10 +423,10 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 const endian = builtin.cpu.arch.endian();
 
                 if (format == .darwin64) {
-                    try writer.writeAll("__.SYMDEF_64");
+                    try writer.writeAll(bsd_symdef_64_magic);
                     try writer.writeInt(u64, @intCast(u64, ranlib_size), endian);
                 } else {
-                    try writer.writeAll("__.SYMDEF\x00\x00\x00");
+                    try writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00");
                     try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
                 }
 
@@ -946,12 +950,35 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
 
                 // This could be the symbol table! So parse that here!
                 const current_seek_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
-                var symbol_magic_check_buffer: [bsd_symdef_magic.len]u8 = undefined;
+                var symbol_magic_check_buffer: [bsd_symdef_longest_magic]u8 = undefined;
 
                 // TODO: handle not reading enough characters!
                 const chars_read = try reader.read(&symbol_magic_check_buffer);
 
-                if (chars_read == symbol_magic_check_buffer.len and mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
+                var sorted = false;
+
+                const magic_match = magic_match_result: {
+                    if (chars_read >= bsd_symdef_magic.len and mem.eql(u8, bsd_symdef_magic, symbol_magic_check_buffer[0..bsd_symdef_magic.len])) {
+                        var magic_len = bsd_symdef_magic.len;
+
+                        if (chars_read >= bsd_symdef_64_magic.len and mem.eql(u8, bsd_symdef_64_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                            magic_len = bsd_symdef_64_magic.len;
+                        } else if (chars_read >= bsd_symdef_sorted_magic.len and mem.eql(u8, bsd_symdef_sorted_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                            magic_len = bsd_symdef_sorted_magic.len;
+                            sorted = true;
+                        }
+
+                        if (chars_read - magic_len > 0) {
+                            try reader.context.seekBy(@intCast(i64, magic_len - chars_read));
+                        }
+
+                        break :magic_match_result true;
+                    }
+
+                    break :magic_match_result false;
+                };
+
+                if (magic_match) {
                     // TODO: BSD symbol table interpretation is architecture dependent,
                     // is there a way we can interpret this? (will be needed for
                     // cross-compilation etc. could possibly take it as a spec?)
