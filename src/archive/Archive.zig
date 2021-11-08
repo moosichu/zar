@@ -969,7 +969,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                         }
 
                         if (chars_read - magic_len > 0) {
-                            try reader.context.seekBy(@intCast(i64, magic_len - chars_read));
+                            try reader.context.seekBy(@intCast(i64, magic_len) - @intCast(i64, chars_read));
                         }
 
                         break :magic_match_result true;
