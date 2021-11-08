@@ -971,6 +971,8 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                             try reader.context.seekBy(@intCast(i64, magic_len) - @intCast(i64, chars_read));
                         }
 
+                        seek_forward_amount = seek_forward_amount - @intCast(u32, magic_len);
+
                         break :magic_match_result true;
                     }
 
@@ -986,8 +988,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     // the spec.
                     const IntType = i32;
                     const endianess = .Big;
-
-                    seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
 
                     // TODO: error if negative (because spec defines this as a long, so should never be that large?)
                     const num_ranlib_bytes = try reader.readInt(IntType, endianess);
