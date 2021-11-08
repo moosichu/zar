@@ -121,6 +121,10 @@ pub const gnu_string_table_seek_pos = magic_string.len + gnu_first_line_buffer_l
 // BSD constants
 pub const bsd_name_length_signifier = "#1/";
 pub const bsd_symdef_magic = "__.SYMDEF";
+pub const bsd_symdef_64_magic = "__.SYMDEF_64";
+pub const bsd_symdef_sorted_magic = "__.SYMDEF SORTED";
+
+pub const bsd_symdef_longest_magic = std.math.max(std.math.max(bsd_symdef_magic.len, bsd_symdef_64_magic.len), bsd_symdef_sorted_magic.len);
 
 pub const invalid_file_index = std.math.maxInt(u64);
 
@@ -178,6 +182,14 @@ pub const Symbol = struct {
     name: []const u8,
     file_index: u64,
 };
+
+// type of ranlib used depends on the archive storage format
+fn Ranlib(comptime storage: type) type {
+    return extern struct {
+        ran_strx: storage, // offset of symbol name in symbol table
+        ran_off: storage, // offset of file header in archive
+    };
+}
 
 const ErrorContext = enum {
     accessing,
@@ -268,7 +280,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     if (self.modifiers.sort_symbol_table) {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
-    
+
     const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
 
     // Calculate common symbol table information
@@ -292,7 +304,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     for (self.files.items) |file, idx| {
         file_offset[idx] = offset;
         offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
-        
+
         // BSD also keeps the name in its data section
         if (is_bsd)
             offset += @intCast(u32, file.name.len);
@@ -300,7 +312,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
     for (self.symbols.items) |symbol, idx| {
         symbols[idx].string_offset = @intCast(u32, symbol_table.items.len);
-        
+
         try symbol_table.appendSlice(symbol.name);
         try symbol_table.append(0);
 
@@ -410,17 +422,17 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                 const endian = builtin.cpu.arch.endian();
 
                 if (format == .darwin64) {
-                    try writer.writeAll("__.SYMDEF_64");
+                    try writer.writeAll(bsd_symdef_64_magic);
                     try writer.writeInt(u64, @intCast(u64, ranlib_size), endian);
                 } else {
-                    try writer.writeAll("__.SYMDEF\x00\x00\x00");
+                    try writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00");
                     try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
                 }
-                
+
                 for (symbols) |sym| {
                     const local_offset = @sizeOf(Header) + symbol_table_size;
                     const solved_offset = local_offset + sym.file_offset;
-                    
+
                     if (format == .darwin64) {
                         try writer.writeInt(u64, sym.string_offset, endian);
                         try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
@@ -594,8 +606,8 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
                 .uid = uid,
             },
         };
-        
-        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len; 
+
+        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
@@ -929,22 +941,104 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
             const archive_name_length = try fmt.parseInt(u32, trimmed_archive_name, 10);
 
+            // TODO: go through int casts & don't assume that they will just work, add defensive error checking
+            // for them. (an internal checked cast or similar).
+
             if (is_first) {
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
                 const current_seek_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
-                var symbol_magic_check_buffer: [bsd_symdef_magic.len]u8 = undefined;
+                var symbol_magic_check_buffer: [bsd_symdef_longest_magic]u8 = undefined;
 
+                // TODO: handle not reading enough characters!
                 const chars_read = try reader.read(&symbol_magic_check_buffer);
-                if (chars_read == symbol_magic_check_buffer.len) {
-                    if (mem.eql(u8, bsd_symdef_magic, &symbol_magic_check_buffer)) {
-                        // We have a symbol table!
-                        // TODO: parse symbol table, we just skip it for now...
-                        seek_forward_amount = seek_forward_amount - @as(u32, symbol_magic_check_buffer.len);
-                        try reader.context.seekBy(seek_forward_amount);
-                        continue;
+
+                var sorted = false;
+
+                const magic_match = magic_match_result: {
+                    if (chars_read >= bsd_symdef_magic.len and mem.eql(u8, bsd_symdef_magic, symbol_magic_check_buffer[0..bsd_symdef_magic.len])) {
+                        var magic_len = bsd_symdef_magic.len;
+
+                        if (chars_read >= bsd_symdef_64_magic.len and mem.eql(u8, bsd_symdef_64_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                            magic_len = bsd_symdef_64_magic.len;
+                        } else if (chars_read >= bsd_symdef_sorted_magic.len and mem.eql(u8, bsd_symdef_sorted_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                            magic_len = bsd_symdef_sorted_magic.len;
+                            sorted = true;
+                        }
+
+                        if (chars_read - magic_len > 0) {
+                            try reader.context.seekBy(@intCast(i64, magic_len) - @intCast(i64, chars_read));
+                        }
+
+                        seek_forward_amount = seek_forward_amount - @intCast(u32, magic_len);
+
+                        break :magic_match_result true;
                     }
+
+                    break :magic_match_result false;
+                };
+
+                if (magic_match) {
+                    // TODO: BSD symbol table interpretation is architecture dependent,
+                    // is there a way we can interpret this? (will be needed for
+                    // cross-compilation etc. could possibly take it as a spec?)
+                    // Using harcoding this information here is a bit of a hacky
+                    // workaround in the short term - even though it is part of
+                    // the spec.
+                    const IntType = i32;
+                    const endianess = .Big;
+
+                    // TODO: error if negative (because spec defines this as a long, so should never be that large?)
+                    const num_ranlib_bytes = try reader.readInt(IntType, endianess);
+                    seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
+
+                    // TODO: error if this doesn't divide properly?
+                    // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
+
+                    var ranlib_bytes = try allocator.alloc(u8, @intCast(u32, num_ranlib_bytes));
+
+                    // TODO: error handling
+                    _ = try reader.read(ranlib_bytes);
+                    seek_forward_amount = seek_forward_amount - @intCast(u32, num_ranlib_bytes);
+
+                    var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
+                    for (ranlibs) |*ranlib| {
+                        ranlib.ran_strx = mem.bigToNative(IntType, ranlib.ran_strx);
+                        ranlib.ran_off = mem.bigToNative(IntType, ranlib.ran_off);
+                    }
+
+                    const symbol_strings_length = try reader.readInt(u32, endianess);
+                    // TODO: We don't really need this information, but maybe it could come in handy
+                    // later?
+                    _ = symbol_strings_length;
+
+                    seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
+
+                    const symbol_string_bytes = try allocator.alloc(u8, seek_forward_amount);
+                    seek_forward_amount = 0;
+                    _ = try reader.read(symbol_string_bytes);
+
+                    const trimmed_symbol_string_bytes = mem.trim(u8, symbol_string_bytes, "\x00");
+
+                    for (ranlibs) |ranlib| {
+                        const symbol_string = mem.sliceTo(trimmed_symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
+
+                        const symbol = Symbol{
+                            .name = symbol_string,
+                            // Note - we don't set the final file-index here,
+                            // we recalculate and override that later in parsing
+                            // when we know what they are!
+                            .file_index = @intCast(u64, ranlib.ran_off),
+                        };
+
+                        try self.symbols.append(allocator, symbol);
+                    }
+
+                    // We have a symbol table!
+                    // TODO: parse symbol table, we just skip it for now...
+                    try reader.context.seekBy(seek_forward_amount);
+                    continue;
                 }
 
                 try reader.context.seekTo(current_seek_pos);
