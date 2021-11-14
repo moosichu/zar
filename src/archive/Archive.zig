@@ -150,7 +150,7 @@ pub const Modifiers = extern struct {
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
-    sort_symbol_table: bool = true,
+    sort_symbol_table: bool = false,
     verbose: bool = false,
 };
 
