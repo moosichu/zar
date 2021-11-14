@@ -593,12 +593,20 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             }
         }
 
+        if (builtin.os.tag == .windows) {
+            mode = 0;
+        } else if (self.modifiers.use_real_timestamps_and_ids) {
+            mode = mode & ~@as(u64, std.os.S.IFREG);
+        } else {
+            mode = mode & ~@as(u64, std.os.S.IFREG | std.os.S.IWGRP);
+        }
+
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = size,
-                .mode = if (builtin.os.tag != .windows) mode & ~@as(u64, std.os.S.IFREG) else 0,
+                .mode = mode,
                 .timestamp = timestamp,
                 .gid = gid,
                 .uid = uid,
