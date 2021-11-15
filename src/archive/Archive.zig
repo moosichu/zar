@@ -150,7 +150,7 @@ pub const Modifiers = extern struct {
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
-    sort_symbol_table: bool = true,
+    sort_symbol_table: bool = false,
     verbose: bool = false,
 };
 
@@ -319,6 +319,9 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         symbols[idx].file_offset = file_offset[symbol.file_index];
     }
 
+    // Set the mtime of symbol table to now seconds in non-deterministic mode
+    const symtab_time: u64 = (if (self.modifiers.use_real_timestamps_and_ids) @intCast(u64, std.time.milliTimestamp()) else 0) / 1000;
+
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
@@ -363,7 +366,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
                     const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
 
-                    try writer.print(Header.format_string, .{ magic, 0, 0, 0, 0, symbol_table_size });
+                    try writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size });
 
                     if (format == .gnu64) {
                         try writer.writeIntBig(u64, @intCast(u64, symbols.len));
@@ -415,7 +418,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
                     int_size + // Int describing size of symbol table's strings
                     symbol_table.items.len; // The lengths of strings themselves
 
-                try writer.print(Header.format_string, .{ "#1/12", 0, 0, 0, 0, symbol_table_size });
+                try writer.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size });
 
                 const endian = builtin.cpu.arch.endian();
 
@@ -593,12 +596,20 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             }
         }
 
+        if (builtin.os.tag == .windows) {
+            mode = 0;
+        } else if (self.modifiers.use_real_timestamps_and_ids) {
+            mode = mode & ~@as(u64, std.os.S.IFREG);
+        } else {
+            mode = mode & ~@as(u64, std.os.S.IFREG | std.os.S.IWGRP);
+        }
+
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
                 .length = size,
-                .mode = if (builtin.os.tag != .windows) mode & ~@as(u64, std.os.S.IFREG) else 0,
+                .mode = mode,
                 .timestamp = timestamp,
                 .gid = gid,
                 .uid = uid,
