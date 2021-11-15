@@ -79,8 +79,8 @@ pub fn log(
 
     const prefix = level.asText() ++ scope_prefix;
 
-    const held = std.debug.getStderrMutex().acquire();
-    defer held.release();
+    std.debug.getStderrMutex().lock();
+    defer std.debug.getStderrMutex().unlock();
     const stderr = std.io.getStdErr().writer();
     if (full_logging) {
         nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
