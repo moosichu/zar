@@ -3,6 +3,7 @@ const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
 const testing = std.testing;
+const logger = std.log.scoped(.tests);
 
 const Archive = @import("archive/Archive.zig");
 
@@ -22,7 +23,45 @@ const test4_bsd_archive = "output_llvm-ar_bsd.a";
 const test4_names = [_][]const u8{"input1.o"};
 
 test "List Files GNU test1" {
-    try testFileContents(test1_dir, test1_gnu_archive, test1_names);
+    const allocator = std.testing.allocator;
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.append("zig");
+    try argv.append("ar");
+    try argv.append("--format=gnu");
+
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const cwd = try std.fs.path.join(allocator, &[_][]const u8{
+        "zig-cache", "tmp", &tmp_dir.sub_path,
+    });
+    defer allocator.free(cwd);
+
+    const file_names = test1_names;
+    const test_src_dir = try fs.cwd().openDir(test1_dir, .{});
+
+    for (file_names) |test_file| {
+        try std.fs.Dir.copyFile(test_src_dir, test_file, tmp_dir.dir, test_file, .{});
+    }
+
+    try argv.append("r");
+    try argv.append(test1_gnu_archive);
+    try argv.appendSlice(&test1_names);
+
+    const result = try std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        .cwd = cwd,
+    });
+
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
+    }
+
+    try testFileContents(cwd, test1_gnu_archive, test1_names);
 }
 
 test "List Files BSD test1" {
