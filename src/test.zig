@@ -7,84 +7,52 @@ const logger = std.log.scoped(.tests);
 
 const Archive = @import("archive/Archive.zig");
 
+const archive_name = "archive.a";
+
 const test1_dir = "test/data/test1";
-const test1_gnu_archive = "output_llvm-ar_gnu.a";
-const test1_bsd_archive = "output_llvm-ar_bsd.a";
 const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
 
 const test2_dir = "test/data/test2";
-const test2_gnu_archive = "output_llvm-ar_gnu.a";
-const test2_bsd_archive = "output_llvm-ar_bsd.a";
 const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
 
 const test4_dir = "test/data/test4";
-const test4_gnu_archive = "output_llvm-ar_gnu.a";
-const test4_bsd_archive = "output_llvm-ar_bsd.a";
 const test4_names = [_][]const u8{"input1.o"};
 
 test "List Files GNU test1" {
-    const allocator = std.testing.allocator;
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
-
-    try argv.append("zig");
-    try argv.append("ar");
-    try argv.append("--format=gnu");
-
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
-
-    const cwd = try std.fs.path.join(allocator, &[_][]const u8{
-        "zig-cache", "tmp", &tmp_dir.sub_path,
-    });
-    defer allocator.free(cwd);
-
-    const file_names = test1_names;
-    const test_src_dir = try fs.cwd().openDir(test1_dir, .{});
-
-    for (file_names) |test_file| {
-        try std.fs.Dir.copyFile(test_src_dir, test_file, tmp_dir.dir, test_file, .{});
-    }
-
-    try argv.append("r");
-    try argv.append(test1_gnu_archive);
-    try argv.appendSlice(&test1_names);
-
-    const result = try std.ChildProcess.exec(.{
-        .allocator = allocator,
-        .argv = argv.items,
-        .cwd = cwd,
-    });
-
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
-
-    try testFileContents(cwd, test1_gnu_archive, test1_names);
+    try createAndTestParsingOfLlvmArchive(.gnu, test1_dir, &test1_names);
 }
 
 test "List Files BSD test1" {
-    try testFileContents(test1_dir, test1_bsd_archive, test1_names);
+    try createAndTestParsingOfLlvmArchive(.bsd, test1_dir, &test1_names);
 }
 
+
+// TODO(TRC):Now Now
 test "List Files GNU test2" {
-    try testFileContents(test2_dir, test2_gnu_archive, test2_names);
+    // try createAndTestParsingOfLlvmArchive(.gnu, test2_dir, &test2_names);
 }
 
 test "List Files BSD test2" {
-    try testFileContents(test2_dir, test2_bsd_archive, test2_names);
+    // try createAndTestParsingOfLlvmArchive(.bsd, test2_dir, &test2_names);
 }
 
 test "List Files GNU test4" {
-    try testFileContents(test4_dir, test4_gnu_archive, test4_names);
+    try createAndTestParsingOfLlvmArchive(.gnu, test4_dir, &test4_names);
 }
 
 test "List Files BSD test4" {
-    try testFileContents(test4_dir, test4_bsd_archive, test4_names);
+    try createAndTestParsingOfLlvmArchive(.bsd, test4_dir, &test4_names);
 }
 
-fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_names: anytype) !void {
+fn createAndTestParsingOfLlvmArchive(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
+    var test_dir_info = try TestDirInfo.getInfo();
+    defer test_dir_info.cleanup();
+
+    try createLlvmArchive(format, test_dir_path, file_names, test_dir_info);
+    try testArchiveParsing(test_dir_info.cwd, file_names);
+}
+
+fn testArchiveParsing(test_dir_path: []const u8, file_names: []const []const u8) !void {
     const test_dir = try fs.cwd().openDir(test_dir_path, .{});
 
     const archive_file = try test_dir.openFile(archive_name, .{});
@@ -115,5 +83,62 @@ fn testFileContents(test_dir_path: []const u8, archive_name: []const u8, file_na
             try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read]));
             current_start_pos = current_start_pos + num_read;
         }
+    }
+}
+
+const LlvmFormat = enum { gnu, bsd };
+
+const TestDirInfo = struct {
+    tmp_dir: std.testing.TmpDir,
+    cwd: []const u8,
+
+    pub fn getInfo() !TestDirInfo {
+        var result: TestDirInfo = .{
+            .tmp_dir = std.testing.tmpDir(.{}),
+            .cwd = undefined,
+        };
+        result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
+            "zig-cache", "tmp", &result.tmp_dir.sub_path,
+        });
+        return result;
+    }
+
+    pub fn cleanup(self: *TestDirInfo) void {
+        self.tmp_dir.cleanup();
+        std.testing.allocator.free(self.cwd);
+    }
+};
+
+fn createLlvmArchive(comptime format: LlvmFormat, comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const allocator = std.testing.allocator;
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.append("zig");
+    try argv.append("ar");
+    switch (format) {
+        .gnu => try argv.append("--format=gnu"),
+        .bsd => try argv.append("--format=bsd"),
+    }
+
+    const test_src_dir = try fs.cwd().openDir(test_src_dir_path, .{});
+
+    for (file_names) |test_file| {
+        try std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{});
+    }
+
+    try argv.append("r");
+    try argv.append(archive_name);
+    try argv.appendSlice(file_names);
+
+    const result = try std.ChildProcess.exec(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        .cwd = test_dir_info.cwd,
+    });
+
+    defer {
+        allocator.free(result.stdout);
+        allocator.free(result.stderr);
     }
 }
