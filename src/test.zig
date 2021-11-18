@@ -26,14 +26,12 @@ test "List Files BSD test1" {
     try createAndTestParsingOfLlvmArchive(.bsd, test1_dir, &test1_names);
 }
 
-
-// TODO(TRC):Now Now
 test "List Files GNU test2" {
-    // try createAndTestParsingOfLlvmArchive(.gnu, test2_dir, &test2_names);
+    try createAndTestParsingOfLlvmArchive(.gnu, test2_dir, &test2_names);
 }
 
 test "List Files BSD test2" {
-    // try createAndTestParsingOfLlvmArchive(.bsd, test2_dir, &test2_names);
+    try createAndTestParsingOfLlvmArchive(.bsd, test2_dir, &test2_names);
 }
 
 test "List Files GNU test4" {

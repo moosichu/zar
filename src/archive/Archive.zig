@@ -850,7 +850,16 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
     defer file_offset_to_index.clearAndFree(allocator);
 
     while (true) {
-        const file_offset = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+        const file_offset = file_offset_result: {
+            var current_file_offset = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+            // Archived files must start on even byte boundaries!
+            // https://www.unix.com/man-page/opensolaris/3head/ar.h/
+            if (@mod(current_file_offset, 2) == 1) {
+                try handleFileIoError(.accessing, self.name, reader.skipBytes(1, .{}));
+                current_file_offset = current_file_offset + 1;
+            }
+            break :file_offset_result current_file_offset;
+        };
 
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
