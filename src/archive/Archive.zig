@@ -140,7 +140,7 @@ pub const Header = extern struct {
     ar_size: [10]u8,
     ar_fmag: [2]u8,
 
-    pub const format_string = "{s: <16}{: <12}{: <6}{: <6}{o: <8}{: <10}`\n";
+    pub const format_string = "{s: <16}{: <12}{: <6}{: <6}{: <8}{: <10}`\n";
 };
 
 pub const Modifiers = extern struct {
@@ -575,8 +575,6 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             mode = file_stats.mode;
         }
 
-        const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
-
         // Get the file magic
         var magic: [4]u8 = undefined;
         _ = try file.reader().read(&magic);
@@ -599,6 +597,8 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L105
             mode = 644;
         }
+
+        const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
 
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
