@@ -21,100 +21,108 @@ const test4_dir = "test/data/test4";
 const test4_names = [_][]const u8{"input1.o"};
 
 test "List Files GNU test1" {
-    try createAndTestParsingOfLlvmArchive(.gnu, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test1_dir, &test1_names);
 }
 
 test "List Files BSD test1" {
-    try createAndTestParsingOfLlvmArchive(.bsd, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test1_dir, &test1_names);
 }
 
 test "List Files GNU test2" {
-    try createAndTestParsingOfLlvmArchive(.gnu, test2_dir, &test2_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test2_dir, &test2_names);
 }
 
 test "List Files BSD test2" {
-    try createAndTestParsingOfLlvmArchive(.bsd, test2_dir, &test2_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test2_dir, &test2_names);
 }
 
 test "List Files GNU test4" {
-    try createAndTestParsingOfLlvmArchive(.gnu, test4_dir, &test4_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test4_dir, &test4_names);
 }
 
 test "List Files BSD test4" {
-    try createAndTestParsingOfLlvmArchive(.bsd, test4_dir, &test4_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test4_dir, &test4_names);
 }
 
-test "End-To-End Create test1" {
-    var test_dir_info = try TestDirInfo.getInfo();
-    defer test_dir_info.cleanup();
-    const test_dir_path = test1_dir;
-    const file_names = &test1_names;
-    const format = LlvmFormat.gnu;
-    try createLlvmArchive(format, test_dir_path, file_names, test_dir_info);
-
-    const allocator = std.testing.allocator;
-    {
-        var argv = std.ArrayList([]const u8).init(allocator);
-        defer argv.deinit();
-
-        try argv.append("zar");
-        switch (format) {
-            .gnu => try argv.append("--format=gnu"),
-            .bsd => try argv.append("--format=bsd"),
-        }
-
-        // TODO: the end-to-end test will interpret one of the files as
-        // mach-O for some reason! So explicitly disable symbols for now.
-        // (this needs fixing!)
-        try argv.append("rSc");
-        try argv.append(zig_ar_archive_name);
-        try argv.appendSlice(file_names);
-
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
-
-        try std.os.chdir(test_dir_info.cwd);
-
-        try main.archiveMain(&arena.allocator, argv.items);
-    }
-
-    {
-        const llvm_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(llvm_ar_archive_name, .{});
-        const zig_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(zig_ar_archive_name, .{});
-
-        const llvm_ar_stat = try llvm_ar_file_handle.stat();
-        const zig_ar_stat = try zig_ar_file_handle.stat();
-
-        try testing.expect(llvm_ar_stat.size == zig_ar_stat.size);
-
-        const llvm_ar_buffer = try allocator.alloc(u8, llvm_ar_stat.size);
-        const zig_ar_buffer = try allocator.alloc(u8, zig_ar_stat.size);
-        defer allocator.free(llvm_ar_buffer);
-        defer allocator.free(zig_ar_buffer);
-
-        {
-            const llvm_ar_read = try llvm_ar_file_handle.preadAll(llvm_ar_buffer, 0);
-            try testing.expect(llvm_ar_read == llvm_ar_stat.size);
-        }
-
-        {
-            const zig_ar_read = try zig_ar_file_handle.preadAll(zig_ar_buffer, 0);
-            try testing.expect(zig_ar_read == zig_ar_stat.size);
-        }
-
-        for (llvm_ar_buffer) |llvm_ar_byte, index| {
-            const zig_ar_byte = zig_ar_buffer[index];
-            try testing.expect(llvm_ar_byte == zig_ar_byte);
-        }
-    }
+test "End-To-End Create GNU test1" {
+    try testArchiveCreation(.gnu, test1_dir, &test1_names);
 }
 
-fn createAndTestParsingOfLlvmArchive(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
+// test "End-To-End Create BSD test1" {
+//     try testArchiveCreation(.bsd, test1_dir, &test1_names);
+// }
+
+test "End-To-End Create GNU test2" {
+    try testArchiveCreation(.gnu, test2_dir, &test2_names);
+}
+
+// test "End-To-End Create BSD test2" {
+//     try testArchiveCreation(.bsd, test2_dir, &test2_names);
+// }
+
+test "End-To-End Create GNU test4" {
+    try testArchiveCreation(.gnu, test4_dir, &test4_names);
+}
+
+// test "End-To-End Create BSD test4" {
+//     try testArchiveCreation(.bsd, test4_dir, &test4_names);
+// }
+
+fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
     defer test_dir_info.cleanup();
 
-    try createLlvmArchive(format, test_dir_path, file_names, test_dir_info);
+    // Create an archive with llvm ar & zar and confirm that the outputs match
+    // byte-for-byte.
+    try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
+
+    // TODO: the end-to-end test will interpret one of the files as
+    // mach-O for some reason! So explicitly disable symbols for now.
+    // (this needs fixing!)
+    const operation = "rSc";
+    try doLlvmArchiveOperation(format, operation, file_names, test_dir_info);
+    try doZarArchiveOperation(format, operation, file_names, test_dir_info);
+    try compareGeneratedArchives(test_dir_info);
+}
+
+fn testParsingOfLlvmGeneratedArchive(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
+    var test_dir_info = try TestDirInfo.getInfo();
+    defer test_dir_info.cleanup();
+
+    try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
+    try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
     try testArchiveParsing(test_dir_info.cwd, file_names);
+}
+
+fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
+    const allocator = std.testing.allocator;
+    const llvm_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(llvm_ar_archive_name, .{});
+    const zig_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(zig_ar_archive_name, .{});
+
+    const llvm_ar_stat = try llvm_ar_file_handle.stat();
+    const zig_ar_stat = try zig_ar_file_handle.stat();
+
+    try testing.expect(llvm_ar_stat.size == zig_ar_stat.size);
+
+    const llvm_ar_buffer = try allocator.alloc(u8, llvm_ar_stat.size);
+    const zig_ar_buffer = try allocator.alloc(u8, zig_ar_stat.size);
+    defer allocator.free(llvm_ar_buffer);
+    defer allocator.free(zig_ar_buffer);
+
+    {
+        const llvm_ar_read = try llvm_ar_file_handle.preadAll(llvm_ar_buffer, 0);
+        try testing.expect(llvm_ar_read == llvm_ar_stat.size);
+    }
+
+    {
+        const zig_ar_read = try zig_ar_file_handle.preadAll(zig_ar_buffer, 0);
+        try testing.expect(zig_ar_read == zig_ar_stat.size);
+    }
+
+    for (llvm_ar_buffer) |llvm_ar_byte, index| {
+        const zig_ar_byte = zig_ar_buffer[index];
+        try testing.expect(llvm_ar_byte == zig_ar_byte);
+    }
 }
 
 fn testArchiveParsing(test_dir_path: []const u8, file_names: []const []const u8) !void {
@@ -174,25 +182,52 @@ const TestDirInfo = struct {
     }
 };
 
-fn createLlvmArchive(comptime format: LlvmFormat, comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
+    switch (format) {
+        .gnu => return "--format=gnu",
+        .bsd => return "--format=bsd",
+    }
+}
+
+fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const test_src_dir = try fs.cwd().openDir(test_src_dir_path, .{});
+
+    for (file_names) |test_file| {
+        try std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{});
+    }
+}
+
+fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const allocator = std.testing.allocator;
+
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.append("zar");
+    try argv.append(llvmFormatToArgument(format));
+
+    try argv.append(operation);
+    try argv.append(zig_ar_archive_name);
+    try argv.appendSlice(file_names);
+
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try std.os.chdir(test_dir_info.cwd);
+
+    try main.archiveMain(&arena.allocator, argv.items);
+}
+
+fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const allocator = std.testing.allocator;
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
     try argv.append("zig");
     try argv.append("ar");
-    switch (format) {
-        .gnu => try argv.append("--format=gnu"),
-        .bsd => try argv.append("--format=bsd"),
-    }
+    try argv.append(llvmFormatToArgument(format));
 
-    const test_src_dir = try fs.cwd().openDir(test_src_dir_path, .{});
-
-    for (file_names) |test_file| {
-        try std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{});
-    }
-
-    try argv.append("r");
+    try argv.append(operation);
     try argv.append(llvm_ar_archive_name);
     try argv.appendSlice(file_names);
 
