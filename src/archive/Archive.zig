@@ -575,12 +575,6 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             mode = file_stats.mode;
         }
 
-        if (!self.modifiers.use_real_timestamps_and_ids) {
-            gid = 0;
-            uid = 0;
-            mtime = 0;
-        }
-
         const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
 
         // Get the file magic
@@ -596,12 +590,14 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
             }
         }
 
-        if (builtin.os.tag == .windows) {
-            mode = 0;
-        } else if (self.modifiers.use_real_timestamps_and_ids) {
-            mode = mode & ~@as(u64, std.os.S.IFREG);
-        } else {
-            mode = mode & ~@as(u64, std.os.S.IFREG | std.os.S.IWGRP);
+        if (!self.modifiers.use_real_timestamps_and_ids) {
+            gid = 0;
+            uid = 0;
+            mtime = 0;
+            // Even though it's not documented - in deterministic mode permissions are always set to:
+            // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/include/llvm/Object/ArchiveWriter.h#L27
+            // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L105
+            mode = 644;
         }
 
         var archived_file = ArchivedFile{
