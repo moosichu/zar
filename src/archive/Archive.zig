@@ -244,9 +244,17 @@ pub fn create(
     };
 }
 
+fn getAlignment(self: *const Archive) u32 {
+    // See: https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L311
+    return switch (self.output_archive_type) {
+        .ambiguous => unreachable,
+        .bsd, .darwin64 => 8,
+        else => 2,
+    };
+}
+
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
-
 /// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive, allocator: *Allocator) !void {
     // Overwrite all contents
@@ -353,7 +361,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the symbol table itself
             {
                 if (symbol_table.items.len != 0) {
-                    if (symbol_table.items.len % 2 != 0)
+                    while (symbol_table.items.len % self.getAlignment() != 0)
                         try symbol_table.append(0);
 
                     const format = self.output_archive_type;
@@ -395,7 +403,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the string table itself
             {
                 if (string_table.items.len != 0) {
-                    if (string_table.items.len % 2 != 0)
+                    while (string_table.items.len % self.getAlignment() != 0)
                         try string_table.append('\n');
                     try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
                 }
@@ -404,7 +412,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         .bsd, .darwin64 => {
             // BSD format: Write the symbol table
             if (symbol_table.items.len != 0) {
-                if (symbol_table.items.len % 2 != 0)
+                while (symbol_table.items.len % self.getAlignment() != 0)
                     try symbol_table.append(0);
 
                 const format = self.output_archive_type;
@@ -450,39 +458,51 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
 
                 try writer.writeAll(symbol_table.items);
             }
-
-            // BSD format: Just write the length of the name in header
-            for (self.files.items) |file, index| {
-                _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len});
-            }
         },
         else => unreachable,
     }
 
     // Write the files
     for (self.files.items) |file, index| {
-        // Write the header
-        // For now, we just write a garbage value to header.name and resolve it later
-        var headerBuffer: [@sizeOf(Header)]u8 = undefined;
+        var header_buffer: [@sizeOf(Header)]u8 = undefined;
+
+        const file_length = file_length_calculation: {
+            if (!is_bsd) {
+                break :file_length_calculation file.contents.length;
+            } else {
+                const file_pos = try self.file.getPos();
+                var padding = (file_pos + header_buffer.len + file.name.len) % self.getAlignment();
+                padding = (self.getAlignment() - padding) % self.getAlignment();
+
+                // BSD format: Just write the length of the name in header
+                _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding});
+                break :file_length_calculation file.contents.length + file.name.len + padding;
+            }
+        };
+
         _ = try std.fmt.bufPrint(
-            &headerBuffer,
+            &header_buffer,
             Header.format_string,
-            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file.contents.length + if (is_bsd) file.name.len else 0 },
+            .{ &header_names[index], file.contents.timestamp, file.contents.uid, file.contents.gid, file.contents.mode, file_length },
         );
 
         // TODO: handle errors
-        _ = try writer.write(&headerBuffer);
+        _ = try writer.write(&header_buffer);
 
         // Write the name of the file in the data section
         if (self.output_archive_type == .bsd) {
             try writer.writeAll(file.name);
+
+            while ((try self.file.getPos()) % self.getAlignment() != 0)
+                try writer.writeByte(0);
         }
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
 
-            // Add padding to even sized file boundary
-            if ((try self.file.getPos()) % 2 != 0)
+            // Files themselves only need 2 byte alignment in all formats
+            // including BSD
+            while ((try self.file.getPos()) % 2 != 0)
                 try writer.writeByte('\n');
         }
     }
