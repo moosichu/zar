@@ -104,7 +104,7 @@ fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const
     return true;
 }
 
-fn openOrCreateFile(archive_path: []u8, print_creation_warning: bool) !fs.File {
+fn openOrCreateFile(archive_path: []const u8, print_creation_warning: bool) !fs.File {
     const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
@@ -122,7 +122,17 @@ fn openOrCreateFile(archive_path: []u8, print_creation_warning: bool) !fs.File {
 }
 
 pub fn main() anyerror!void {
-    archiveMain() catch |err| {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    var allocator = &arena.allocator;
+    const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
+        return err;
+    } else {
+        logger.err("Unknown error occured.");
+    };
+
+    archiveMain(allocator, args) catch |err| {
         handleArchiveError(err) catch |e| if (debug_errors) {
             return e;
         } else {
@@ -131,12 +141,7 @@ pub fn main() anyerror!void {
     };
 }
 
-pub fn archiveMain() anyerror!void {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    var allocator = &arena.allocator;
-    const args = try process.argsAlloc(allocator);
+pub fn archiveMain(allocator: anytype, args: anytype) anyerror!void {
 
     // skip the executable name
     const stdout = io.getStdOut().writer();
