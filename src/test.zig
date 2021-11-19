@@ -48,25 +48,25 @@ test "End-To-End Create GNU test1" {
     try testArchiveCreation(.gnu, test1_dir, &test1_names);
 }
 
-// test "End-To-End Create BSD test1" {
-//     try testArchiveCreation(.bsd, test1_dir, &test1_names);
-// }
+test "End-To-End Create BSD test1" {
+    try testArchiveCreation(.bsd, test1_dir, &test1_names);
+}
 
 test "End-To-End Create GNU test2" {
     try testArchiveCreation(.gnu, test2_dir, &test2_names);
 }
 
-// test "End-To-End Create BSD test2" {
-//     try testArchiveCreation(.bsd, test2_dir, &test2_names);
-// }
+test "End-To-End Create BSD test2" {
+    try testArchiveCreation(.bsd, test2_dir, &test2_names);
+}
 
 test "End-To-End Create GNU test4" {
     try testArchiveCreation(.gnu, test4_dir, &test4_names);
 }
 
-// test "End-To-End Create BSD test4" {
-//     try testArchiveCreation(.bsd, test4_dir, &test4_names);
-// }
+test "End-To-End Create BSD test4" {
+    try testArchiveCreation(.bsd, test4_dir, &test4_names);
+}
 
 fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
