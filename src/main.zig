@@ -104,13 +104,13 @@ fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const
     return true;
 }
 
-fn openOrCreateFile(archive_path: []const u8, print_creation_warning: bool) !fs.File {
-    const open_file_handle = fs.cwd().openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
+fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool) !fs.File {
+    const open_file_handle = cwd.openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
                 logger.warn("Creating new archive as none exists at path provided\n", .{});
             }
-            const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, fs.cwd().createFile(archive_path, .{ .read = true }));
+            const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, cwd.createFile(archive_path, .{ .read = true }));
             return create_file_handle;
         },
         else => {
@@ -132,7 +132,8 @@ pub fn main() anyerror!void {
         logger.err("Unknown error occured.");
     };
 
-    archiveMain(allocator, args) catch |err| {
+    const cwd = fs.cwd();
+    archiveMain(cwd, allocator, args) catch |err| {
         handleArchiveError(err) catch |e| if (debug_errors) {
             return e;
         } else {
@@ -141,7 +142,7 @@ pub fn main() anyerror!void {
     };
 }
 
-pub fn archiveMain(allocator: anytype, args: anytype) anyerror!void {
+pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void {
 
     // skip the executable name
     const stdout = io.getStdOut().writer();
@@ -285,48 +286,48 @@ pub fn archiveMain(allocator: anytype, args: anytype) anyerror!void {
 
     switch (operation) {
         .insert => {
-            const file = try openOrCreateFile(archive_path, !modifiers.create);
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
             defer file.close();
 
-            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
             try archive.parse(allocator);
             try archive.insertFiles(allocator, files);
             try archive.finalize(allocator);
         },
         .delete => {
-            const file = try openOrCreateFile(archive_path, !modifiers.create);
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
             defer file.close();
 
-            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
             try archive.parse(allocator);
             try archive.deleteFiles(files);
             try archive.finalize(allocator);
         },
         .print_names => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
                 try stdout.print("{s}\n", .{parsed_file.name});
             }
         },
         .print_contents => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
                 try parsed_file.contents.write(stdout, stderr);
             }
         },
         .print_symbols => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, fs.cwd().openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
             try archive.parse(allocator);
             for (archive.symbols.items) |symbol| {
                 if (modifiers.verbose) {

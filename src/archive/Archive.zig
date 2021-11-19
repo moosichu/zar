@@ -15,6 +15,7 @@ const coff = std.coff;
 
 const Allocator = std.mem.Allocator;
 
+dir: fs.Dir,
 file: fs.File,
 name: []const u8,
 
@@ -226,12 +227,14 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
 }
 
 pub fn create(
+    dir: fs.Dir,
     file: fs.File,
     name: []const u8,
     output_archive_type: ArchiveType,
     modifiers: Modifiers,
 ) !Archive {
     return Archive{
+        .dir = dir,
         .file = file,
         .name = name,
         .inferred_archive_type = .ambiguous,
@@ -552,7 +555,7 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
     for (self.files.items) |archived_file| {
         for (file_names) |file_name| {
             if (std.mem.eql(u8, archived_file.name, file_name)) {
-                const file = try std.fs.cwd().createFile(archived_file.name, .{});
+                const file = try self.dir.createFile(archived_file.name, .{});
                 defer file.close();
 
                 try file.writeAll(archived_file.contents.bytes);
@@ -565,7 +568,7 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
 pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const u8) !void {
     for (file_names) |file_name| {
         // Open the file and read all of its contents
-        const file = try std.fs.cwd().openFile(file_name, .{ .read = true });
+        const file = try self.dir.openFile(file_name, .{ .read = true });
         defer file.close();
 
         // We only need to do this because file stats don't include
@@ -1107,7 +1110,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
         };
 
         if (self.inferred_archive_type == .gnuthin) {
-            var thin_file = try handleFileIoError(.opening, trimmed_archive_name, std.fs.cwd().openFile(trimmed_archive_name, .{}));
+            var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
             try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
@@ -1230,7 +1233,7 @@ pub const MRIParser = struct {
                             .clear => {
                                 // This is a bit of a hack but its reliable.
                                 // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
-                                const file = try fs.cwd().openFile(self.file_name.?, .{ .write = true });
+                                const file = try self.dir.openFile(self.file_name.?, .{ .write = true });
                                 self.archive = Archive.create(file, self.file_name.?);
 
                                 try self.archive.?.parse(allocator, stderr);
@@ -1249,7 +1252,7 @@ pub const MRIParser = struct {
                             .open => {
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try fs.cwd().openFile(file_name, .{ .write = true });
+                                const file = try self.dir.openFile(file_name, .{ .write = true });
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
 
@@ -1259,7 +1262,7 @@ pub const MRIParser = struct {
                                 // TODO: Thin archives creation
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try fs.cwd().createFile(file_name, .{ .read = true });
+                                const file = try self.dir.createFile(file_name, .{ .read = true });
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
 

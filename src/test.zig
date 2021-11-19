@@ -91,7 +91,7 @@ fn testParsingOfLlvmGeneratedArchive(comptime format: LlvmFormat, comptime test_
 
     try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
     try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
-    try testArchiveParsing(test_dir_info.cwd, file_names);
+    try testArchiveParsing(test_dir_info, file_names);
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
@@ -125,8 +125,8 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(test_dir_path: []const u8, file_names: []const []const u8) !void {
-    const test_dir = try fs.cwd().openDir(test_dir_path, .{});
+fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8) !void {
+    const test_dir = test_dir_info.tmp_dir.dir;
 
     const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{});
     defer archive_file.close();
@@ -136,7 +136,7 @@ fn testArchiveParsing(test_dir_path: []const u8, file_names: []const []const u8)
 
     var allocator = &arena.allocator;
 
-    var archive = try Archive.create(archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{});
+    var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{});
     try archive.parse(allocator);
 
     var memory_buffer = try allocator.alloc(u8, 1024 * 1024);
@@ -213,9 +213,7 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    try std.os.chdir(test_dir_info.cwd);
-
-    try main.archiveMain(&arena.allocator, argv.items);
+    try main.archiveMain(test_dir_info.tmp_dir.dir, &arena.allocator, argv.items);
 }
 
 fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
