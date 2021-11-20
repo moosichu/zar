@@ -20,6 +20,17 @@ const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_a
 const test4_dir = "test/data/test4";
 const test4_names = [_][]const u8{"input1.o"};
 
+// Testing TODOs:
+// - Create symbol comparison tests (generate source files procedurally)
+// - Add testing matrices for testing different combinations of arguments & modifiers
+// - Create end-to-end tests that check stdout of parsing functionality (not just archive generation)
+//   Including variatns of modifiers
+// - Create end-to-end tests that check extracted files are the same
+// - Create "stress" tests that go beyond the basic tests & auto-generate a massive amount of
+//   archive input that can be tested against.
+// - Test the failure cases (and see how we handle them)
+// - Fuzz test
+
 test "List Files GNU test1" {
     try testParsingOfLlvmGeneratedArchive(.gnu, test1_dir, &test1_names);
 }
