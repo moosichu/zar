@@ -28,12 +28,20 @@ test "List Files BSD test1" {
     try testParsingOfLlvmGeneratedArchive(.bsd, test1_dir, &test1_names);
 }
 
+test "List Files Darwin test1" {
+    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
+}
+
 test "List Files GNU test2" {
     try testParsingOfLlvmGeneratedArchive(.gnu, test2_dir, &test2_names);
 }
 
 test "List Files BSD test2" {
     try testParsingOfLlvmGeneratedArchive(.bsd, test2_dir, &test2_names);
+}
+
+test "List Files Darwin test2" {
+    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
 }
 
 test "List Files GNU test4" {
@@ -44,6 +52,10 @@ test "List Files BSD test4" {
     try testParsingOfLlvmGeneratedArchive(.bsd, test4_dir, &test4_names);
 }
 
+test "List Files Darwin test4" {
+    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
+}
+
 test "End-To-End Create GNU test1" {
     try testArchiveCreation(.gnu, test1_dir, &test1_names);
 }
@@ -51,6 +63,11 @@ test "End-To-End Create GNU test1" {
 test "End-To-End Create BSD test1" {
     try testArchiveCreation(.bsd, test1_dir, &test1_names);
 }
+
+// TODO: get darwin creation tests working...
+// test "End-To-End Create Darwin test1" {
+//     try testArchiveCreation(.darwin, test1_dir, &test1_names);
+// }
 
 test "End-To-End Create GNU test2" {
     try testArchiveCreation(.gnu, test2_dir, &test2_names);
@@ -159,7 +176,7 @@ fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8
     }
 }
 
-const LlvmFormat = enum { gnu, bsd };
+const LlvmFormat = enum { gnu, bsd, darwin };
 
 const TestDirInfo = struct {
     tmp_dir: std.testing.TmpDir,
@@ -186,6 +203,7 @@ fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
     switch (format) {
         .gnu => return "--format=gnu",
         .bsd => return "--format=bsd",
+        .darwin => return "--format=darwin",
     }
 }
 
