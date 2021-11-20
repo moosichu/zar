@@ -43,8 +43,40 @@ pub const ArchiveType = enum {
     gnuthin,
     gnu64,
     bsd,
-    darwin64, // darwin_32 *is* bsd
+    darwin, // *mostly* like BSD, with some differences in limited contexts when writing for determinism reasons
+    darwin64,
     coff, // (windows)
+
+    pub fn getAlignment(self: ArchiveType) u32 {
+        // See: https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L311
+        return switch (self) {
+            .ambiguous => unreachable,
+            else => if (self.isBsdLike()) @as(u32, 8) else @as(u32, 2),
+        };
+    }
+
+    pub fn getFileAlignment(self: ArchiveType) u32 {
+        // In this context, bsd like archives get 2 byte alignment but darwin
+        // stick to 8 byte alignment
+        return switch (self) {
+            .ambiguous => unreachable,
+            else => if (self.isDarwin()) @as(u32, 8) else @as(u32, 2),
+        };
+    }
+
+    pub fn isBsdLike(self: ArchiveType) bool {
+        return switch (self) {
+            .bsd, .darwin, .darwin64 => true,
+            else => false,
+        };
+    }
+
+    pub fn isDarwin(self: ArchiveType) bool {
+        return switch (self) {
+            .darwin, .darwin64 => true,
+            else => false,
+        };
+    }
 };
 
 pub const Operation = enum {
@@ -219,7 +251,7 @@ pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, 
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    if (builtin.os.tag.isDarwin()) return .bsd;
+    if (builtin.os.tag.isDarwin()) return .darwin;
     switch (builtin.os.tag) {
         .windows => return .coff,
         else => return .gnu,
@@ -244,15 +276,6 @@ pub fn create(
         .file_name_to_index = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
-    };
-}
-
-fn getAlignment(self: *const Archive) u32 {
-    // See: https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L311
-    return switch (self.output_archive_type) {
-        .ambiguous => unreachable,
-        .bsd, .darwin64 => 8,
-        else => 2,
     };
 }
 
@@ -292,8 +315,6 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
 
-    const is_bsd = (self.output_archive_type == .bsd) or (self.output_archive_type == .darwin64);
-
     // Calculate common symbol table information
     const RanlibSymbol = struct {
         file_offset: u32,
@@ -317,7 +338,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
 
         // BSD also keeps the name in its data section
-        if (is_bsd)
+        if (self.output_archive_type.isBsdLike())
             offset += @intCast(u32, file.name.len);
     }
 
@@ -364,7 +385,7 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the symbol table itself
             {
                 if (symbol_table.items.len != 0) {
-                    while (symbol_table.items.len % self.getAlignment() != 0)
+                    while (symbol_table.items.len % self.output_archive_type.getAlignment() != 0)
                         try symbol_table.append(0);
 
                     const format = self.output_archive_type;
@@ -406,16 +427,16 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
             // Write the string table itself
             {
                 if (string_table.items.len != 0) {
-                    while (string_table.items.len % self.getAlignment() != 0)
+                    while (string_table.items.len % self.output_archive_type.getAlignment() != 0)
                         try string_table.append('\n');
                     try writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
                 }
             }
         },
-        .bsd, .darwin64 => {
+        .bsd, .darwin, .darwin64 => {
             // BSD format: Write the symbol table
             if (symbol_table.items.len != 0) {
-                while (symbol_table.items.len % self.getAlignment() != 0)
+                while (symbol_table.items.len % self.output_archive_type.getAlignment() != 0)
                     try symbol_table.append(0);
 
                 const format = self.output_archive_type;
@@ -470,16 +491,22 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         var header_buffer: [@sizeOf(Header)]u8 = undefined;
 
         const file_length = file_length_calculation: {
-            if (!is_bsd) {
+            if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
                 const file_pos = try self.file.getPos();
-                var padding = (file_pos + header_buffer.len + file.name.len) % self.getAlignment();
-                padding = (self.getAlignment() - padding) % self.getAlignment();
+                var padding = (file_pos + header_buffer.len + file.name.len) % self.output_archive_type.getAlignment();
+                padding = (self.output_archive_type.getAlignment() - padding) % self.output_archive_type.getAlignment();
 
                 // BSD format: Just write the length of the name in header
                 _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding});
-                break :file_length_calculation file.contents.length + file.name.len + padding;
+                if (self.output_archive_type.isDarwin()) {
+                    var file_padding = file.contents.length % self.output_archive_type.getFileAlignment();
+                    file_padding = (self.output_archive_type.getFileAlignment() - file_padding) % self.output_archive_type.getFileAlignment();
+                    break :file_length_calculation file.contents.length + file.name.len + padding + file_padding;
+                } else {
+                    break :file_length_calculation file.contents.length + file.name.len + padding;
+                }
             }
         };
 
@@ -493,19 +520,17 @@ pub fn finalize(self: *Archive, allocator: *Allocator) !void {
         _ = try writer.write(&header_buffer);
 
         // Write the name of the file in the data section
-        if (self.output_archive_type == .bsd) {
+        if (self.output_archive_type.isBsdLike()) {
             try writer.writeAll(file.name);
 
-            while ((try self.file.getPos()) % self.getAlignment() != 0)
+            while ((try self.file.getPos()) % self.output_archive_type.getAlignment() != 0)
                 try writer.writeByte(0);
         }
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
 
-            // Files themselves only need 2 byte alignment in all formats
-            // including BSD
-            while ((try self.file.getPos()) % 2 != 0)
+            while ((try self.file.getPos()) % self.output_archive_type.getFileAlignment() != 0)
                 try writer.writeByte('\n');
         }
     }
@@ -928,7 +953,7 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     return ParseError.MalformedArchive;
                 }
             },
-            .bsd, .darwin64 => {
+            .bsd, .darwin, .darwin64 => {
                 if (must_be_gnu) {
                     return ParseError.MalformedArchive;
                 }

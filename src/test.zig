@@ -75,10 +75,9 @@ test "End-To-End Create BSD test1" {
     try testArchiveCreation(.bsd, test1_dir, &test1_names);
 }
 
-// TODO: get darwin creation tests working...
-// test "End-To-End Create Darwin test1" {
-//     try testArchiveCreation(.darwin, test1_dir, &test1_names);
-// }
+test "End-To-End Create Darwin test1" {
+    try testArchiveCreation(.darwin, test1_dir, &test1_names);
+}
 
 test "End-To-End Create GNU test2" {
     try testArchiveCreation(.gnu, test2_dir, &test2_names);
@@ -86,6 +85,10 @@ test "End-To-End Create GNU test2" {
 
 test "End-To-End Create BSD test2" {
     try testArchiveCreation(.bsd, test2_dir, &test2_names);
+}
+
+test "End-To-End Create Darwin test2" {
+    try testArchiveCreation(.darwin, test1_dir, &test1_names);
 }
 
 test "End-To-End Create GNU test4" {
@@ -96,9 +99,16 @@ test "End-To-End Create BSD test4" {
     try testArchiveCreation(.bsd, test4_dir, &test4_names);
 }
 
+test "End-To-End Create Darwin test4" {
+    try testArchiveCreation(.darwin, test1_dir, &test1_names);
+}
+
 fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
-    defer test_dir_info.cleanup();
+    // if a test is going to fail anyway, this is a useful way to debug it for now..
+    var cancel_cleanup = false;
+    defer if (!cancel_cleanup) test_dir_info.cleanup();
+    errdefer cancel_cleanup = true;
 
     // Create an archive with llvm ar & zar and confirm that the outputs match
     // byte-for-byte.

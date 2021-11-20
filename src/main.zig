@@ -178,7 +178,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
                 } else if (mem.eql(u8, format_string, "bsd")) {
                     archive_type = .bsd;
                 } else if (mem.eql(u8, format_string, "darwin")) {
-                    archive_type = .bsd;
+                    archive_type = .darwin;
                 } else if (mem.eql(u8, format_string, "gnu")) {
                     archive_type = .gnu;
                 } else {
