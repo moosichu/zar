@@ -11,14 +11,21 @@ const main = @import("main.zig");
 const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
 
+const no_symbols = [_][][]const u8{};
+
 const test1_dir = "test/data/test1";
 const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
+const test1_symbols = no_symbols;
 
 const test2_dir = "test/data/test2";
 const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
+const test2_symbols = no_symbols;
 
 const test4_dir = "test/data/test4";
 const test4_names = [_][]const u8{"input1.o"};
+const test4_symbols = [_][]const []const u8{
+    &[_][]const u8{ "input1_symbol1", "input1_symbol2" }, // file 1
+};
 
 // Testing TODOs:
 // - Create symbol comparison tests (generate source files procedurally)
@@ -32,39 +39,39 @@ const test4_names = [_][]const u8{"input1.o"};
 // - Fuzz test
 
 test "List Files GNU test1" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "List Files BSD test1" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "List Files Darwin test1" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "List Files GNU test2" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test2_dir, &test2_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test2_dir, &test2_names, &test2_symbols);
 }
 
 test "List Files BSD test2" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test2_dir, &test2_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test2_dir, &test2_names, &test2_symbols);
 }
 
 test "List Files Darwin test2" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "List Files GNU test4" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test4_dir, &test4_names);
+    try testParsingOfLlvmGeneratedArchive(.gnu, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "List Files BSD test4" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test4_dir, &test4_names);
+    try testParsingOfLlvmGeneratedArchive(.bsd, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "List Files Darwin test4" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names);
+    try testParsingOfLlvmGeneratedArchive(.darwin, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "End-To-End Create GNU test1" {
@@ -100,7 +107,7 @@ test "End-To-End Create BSD test4" {
 }
 
 test "End-To-End Create Darwin test4" {
-    try testArchiveCreation(.darwin, test1_dir, &test1_names);
+    try testArchiveCreation(.darwin, test4_dir, &test4_names);
 }
 
 fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
@@ -123,13 +130,13 @@ fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []co
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
+fn testParsingOfLlvmGeneratedArchive(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
     defer test_dir_info.cleanup();
 
     try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
     try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
-    try testArchiveParsing(test_dir_info, file_names);
+    try testArchiveParsing(test_dir_info, file_names, symbol_names);
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
@@ -163,7 +170,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8) !void {
+fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
     const test_dir = test_dir_info.tmp_dir.dir;
 
     const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{});
@@ -193,6 +200,16 @@ fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8
             }
             try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read]));
             current_start_pos = current_start_pos + num_read;
+        }
+    }
+
+    var current_index = @as(u32, 0);
+    for (symbol_names) |symbol_names_in_file, file_index| {
+        for (symbol_names_in_file) |symbol_name| {
+            const parsed_symbol = archive.symbols.items[current_index];
+            try testing.expect(mem.eql(u8, parsed_symbol.name, symbol_name));
+            try testing.expect(mem.eql(u8, archive.files.items[parsed_symbol.file_index].name, file_names[file_index]));
+            current_index = current_index + 1;
         }
     }
 }
