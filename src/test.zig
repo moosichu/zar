@@ -86,13 +86,13 @@ test "List Files GNU test5" {
     try testParsingOfLlvmGeneratedArchive(.gnu, test5_dir, &test5_names, &test5_symbols);
 }
 
-// test "List Files BSD test5" {
-//     try testParsingOfLlvmGeneratedArchive(.bsd, test5_dir, &test5_names, &test5_symbols);
-// }
+test "List Files BSD test5" {
+    try testParsingOfLlvmGeneratedArchive(.bsd, test5_dir, &test5_names, &test5_symbols);
+}
 
-// test "List Files Darwin test5" {
-//     try testParsingOfLlvmGeneratedArchive(.darwin, test5_dir, &test5_names, &test5_symbols);
-// }
+test "List Files Darwin test5" {
+    try testParsingOfLlvmGeneratedArchive(.darwin, test5_dir, &test5_names, &test5_symbols);
+}
 
 test "End-To-End Create GNU test1" {
     try testArchiveCreation(.gnu, test1_dir, &test1_names);

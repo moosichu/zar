@@ -1049,7 +1049,15 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     // workaround in the short term - even though it is part of
                     // the spec.
                     const IntType = i32;
-                    const endianess = .Big;
+                    // TODO: make this target arch endianess
+                    const endianess = .Little;
+
+                    {
+                        const current_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+                        const remainder = @intCast(u32, (self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment());
+                        seek_forward_amount = seek_forward_amount - remainder;
+                        try handleFileIoError(.accessing, self.name, reader.context.seekBy(remainder));
+                    }
 
                     // TODO: error if negative (because spec defines this as a long, so should never be that large?)
                     const num_ranlib_bytes = try reader.readInt(IntType, endianess);
@@ -1065,10 +1073,6 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     seek_forward_amount = seek_forward_amount - @intCast(u32, num_ranlib_bytes);
 
                     var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
-                    for (ranlibs) |*ranlib| {
-                        ranlib.ran_strx = mem.bigToNative(IntType, ranlib.ran_strx);
-                        ranlib.ran_off = mem.bigToNative(IntType, ranlib.ran_off);
-                    }
 
                     const symbol_strings_length = try reader.readInt(u32, endianess);
                     // TODO: We don't really need this information, but maybe it could come in handy
@@ -1081,10 +1085,8 @@ pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || Cr
                     seek_forward_amount = 0;
                     _ = try reader.read(symbol_string_bytes);
 
-                    const trimmed_symbol_string_bytes = mem.trim(u8, symbol_string_bytes, "\x00");
-
                     for (ranlibs) |ranlib| {
-                        const symbol_string = mem.sliceTo(trimmed_symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
+                        const symbol_string = mem.sliceTo(symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
 
                         const symbol = Symbol{
                             .name = symbol_string,
