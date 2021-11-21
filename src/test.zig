@@ -24,7 +24,15 @@ const test2_symbols = no_symbols;
 const test4_dir = "test/data/test4";
 const test4_names = [_][]const u8{"input1.o"};
 const test4_symbols = [_][]const []const u8{
-    &[_][]const u8{ "input1_symbol1", "input1_symbol2" }, // file 1
+    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+};
+
+const test5_dir = "test/data/test5";
+const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
+const test5_symbols = [_][]const []const u8{
+    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+    &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
+    &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
 };
 
 // Testing TODOs:
@@ -74,6 +82,18 @@ test "List Files Darwin test4" {
     try testParsingOfLlvmGeneratedArchive(.darwin, test4_dir, &test4_names, &test4_symbols);
 }
 
+test "List Files GNU test5" {
+    try testParsingOfLlvmGeneratedArchive(.gnu, test5_dir, &test5_names, &test5_symbols);
+}
+
+// test "List Files BSD test5" {
+//     try testParsingOfLlvmGeneratedArchive(.bsd, test5_dir, &test5_names, &test5_symbols);
+// }
+
+// test "List Files Darwin test5" {
+//     try testParsingOfLlvmGeneratedArchive(.darwin, test5_dir, &test5_names, &test5_symbols);
+// }
+
 test "End-To-End Create GNU test1" {
     try testArchiveCreation(.gnu, test1_dir, &test1_names);
 }
@@ -108,6 +128,18 @@ test "End-To-End Create BSD test4" {
 
 test "End-To-End Create Darwin test4" {
     try testArchiveCreation(.darwin, test4_dir, &test4_names);
+}
+
+test "End-To-End Create GNU test5" {
+    try testArchiveCreation(.gnu, test5_dir, &test5_names);
+}
+
+test "End-To-End Create BSD test5" {
+    try testArchiveCreation(.bsd, test5_dir, &test5_names);
+}
+
+test "End-To-End Create Darwin test5" {
+    try testArchiveCreation(.darwin, test5_dir, &test5_names);
 }
 
 fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
