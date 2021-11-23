@@ -236,7 +236,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
             'x' => break :operation Archive.Operation.extract,
             'S' => break :operation Archive.Operation.print_symbols,
             else => {
-                printArgumentError("'{}' is not a valid operation.", .{operation_slice[0]});
+                printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
                 return;
             },
         }
