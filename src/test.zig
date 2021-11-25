@@ -12,28 +12,7 @@ const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
 
 const no_symbols = [_][][]const u8{};
-
-const test1_dir = "test/data/test1";
-const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
-const test1_symbols = no_symbols;
-
-const test2_dir = "test/data/test2";
-const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
-const test2_symbols = no_symbols;
-
-const test4_dir = "test/data/test4";
-const test4_names = [_][]const u8{"input1.o"};
-const test4_symbols = [_][]const []const u8{
-    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
-};
-
-const test5_dir = "test/data/test5";
-const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
-const test5_symbols = [_][]const []const u8{
-    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
-    &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
-    &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
-};
+const no_dir = "test/data/none";
 
 // Testing TODOs:
 // - Create symbol comparison tests (generate source files procedurally)
@@ -47,101 +26,159 @@ const test5_symbols = [_][]const []const u8{
 // - Add parsing tests using archives created by native archivers on appropriate platforms
 // - Fuzz test
 
-test "List Files GNU test1" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test1_dir, &test1_names, &test1_symbols);
+const test1_dir = "test/data/test1";
+const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
+const test1_symbols = no_symbols;
+
+test "Parse Archive 1" {
+    inline for (llvm_formats) |llvm_format| {
+        try testParsingOfLlvmGeneratedArchive(llvm_format, test1_dir, &test1_names, &test1_symbols);
+    }
 }
 
-test "List Files BSD test1" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test1_dir, &test1_names, &test1_symbols);
+test "Create Archive 1" {
+    inline for (llvm_formats) |llvm_format| {
+        try testArchiveCreation(llvm_format, test1_dir, &test1_names, &test1_symbols);
+    }
 }
 
-test "List Files Darwin test1" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names, &test1_symbols);
+const test2_dir = "test/data/test2";
+const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
+const test2_symbols = no_symbols;
+
+test "Parse Archive 2" {
+    inline for (llvm_formats) |llvm_format| {
+        try testParsingOfLlvmGeneratedArchive(llvm_format, test2_dir, &test2_names, &test2_symbols);
+    }
 }
 
-test "List Files GNU test2" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test2_dir, &test2_names, &test2_symbols);
+test "Create Archive 2" {
+    inline for (llvm_formats) |llvm_format| {
+        try testArchiveCreation(llvm_format, test2_dir, &test2_names, &test2_symbols);
+    }
 }
 
-test "List Files BSD test2" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test2_dir, &test2_names, &test2_symbols);
+const test4_names = [_][]const u8{"input1.o"};
+const test4_symbols = [_][]const []const u8{
+    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+};
+
+test "Parse Archive 4" {
+    inline for (llvm_formats) |llvm_format| {
+        try testParsingOfLlvmGeneratedArchive(llvm_format, no_dir, &test4_names, &test4_symbols);
+    }
 }
 
-test "List Files Darwin test2" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test1_dir, &test1_names, &test1_symbols);
+test "Create Archive 4" {
+    inline for (llvm_formats) |llvm_format| {
+        try testArchiveCreation(llvm_format, no_dir, &test4_names, &test4_symbols);
+    }
 }
 
-test "List Files GNU test4" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test4_dir, &test4_names, &test4_symbols);
+const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
+const test5_symbols = [_][]const []const u8{
+    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+    &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
+    &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
+};
+
+test "Parse Archive 5" {
+    inline for (llvm_formats) |llvm_format| {
+        try testParsingOfLlvmGeneratedArchive(llvm_format, no_dir, &test5_names, &test5_symbols);
+    }
 }
 
-test "List Files BSD test4" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test4_dir, &test4_names, &test4_symbols);
+test "Create Archive 5" {
+    inline for (llvm_formats) |llvm_format| {
+        try testArchiveCreation(llvm_format, no_dir, &test5_names, &test5_symbols);
+    }
 }
 
-test "List Files Darwin test4" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test4_dir, &test4_names, &test4_symbols);
+const test6_filecount = 55;
+const test6_symcount = 15;
+
+const test6_names = createFileArray(test6_filecount);
+const test6_symbols = createSymbolArray(&test6_names, test6_symcount);
+
+test "Parse Archive 6" {
+    inline for (llvm_formats) |llvm_format| {
+        try testParsingOfLlvmGeneratedArchive(llvm_format, no_dir, &test6_names, &test6_symbols);
+    }
 }
 
-test "List Files GNU test5" {
-    try testParsingOfLlvmGeneratedArchive(.gnu, test5_dir, &test5_names, &test5_symbols);
+test "Create Archive 6" {
+    inline for (llvm_formats) |llvm_format| {
+        try testArchiveCreation(llvm_format, no_dir, &test6_names, &test6_symbols);
+    }
 }
 
-test "List Files BSD test5" {
-    try testParsingOfLlvmGeneratedArchive(.bsd, test5_dir, &test5_names, &test5_symbols);
+fn createFileArray(comptime num_files: comptime_int) [num_files][]const u8 {
+    comptime var aggregator: [num_files][]const u8 = undefined;
+    for (aggregator) |_, index| {
+        aggregator[index] = std.fmt.comptimePrint("index_{}.o", .{index});
+    }
+    return aggregator;
 }
 
-test "List Files Darwin test5" {
-    try testParsingOfLlvmGeneratedArchive(.darwin, test5_dir, &test5_names, &test5_symbols);
+fn createInFileSymbolArray(comptime file_index: comptime_int, comptime num_symbols: comptime_int) [num_symbols][]const u8 {
+    comptime var aggregator: [num_symbols][]const u8 = undefined;
+    for (aggregator) |_, index| {
+        aggregator[index] = std.fmt.comptimePrint("symbol_{}_file_{}", .{index, file_index});
+    }
+    return aggregator;
 }
 
-test "End-To-End Create GNU test1" {
-    try testArchiveCreation(.gnu, test1_dir, &test1_names, &test1_symbols);
+fn createSymbolArray(comptime file_names: []const []const u8, comptime num_symbols: comptime_int) [file_names.len][]const []const u8 {
+    comptime var aggregator: [file_names.len][]const []const u8 = undefined;
+    for (aggregator) |_, file_index| {
+        aggregator[file_index] = &createInFileSymbolArray(file_index, num_symbols);
+    }
+    return aggregator;
 }
 
-test "End-To-End Create BSD test1" {
-    try testArchiveCreation(.bsd, test1_dir, &test1_names, &test1_symbols);
-}
+const llvm_formats = result: {
+    const fields = std.meta.fields(LlvmFormat);
+    comptime var aggregator: [fields.len]LlvmFormat = undefined;
+    inline for (fields) |field, field_index| {
+        aggregator[field_index] = @intToEnum(LlvmFormat, field.value);
+    }
+    break :result aggregator;
+};
 
-test "End-To-End Create Darwin test1" {
-    try testArchiveCreation(.darwin, test1_dir, &test1_names, &test1_symbols);
-}
+const LlvmFormat = enum {
+    gnu,
+    bsd,
+    darwin,
 
-test "End-To-End Create GNU test2" {
-    try testArchiveCreation(.gnu, test2_dir, &test2_names, &test2_symbols);
-}
+    fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
+        switch (format) {
+            .gnu => return "--format=gnu",
+            .bsd => return "--format=bsd",
+            .darwin => return "--format=darwin",
+        }
+    }
+};
 
-test "End-To-End Create BSD test2" {
-    try testArchiveCreation(.bsd, test2_dir, &test2_names, &test2_symbols);
-}
+const TestDirInfo = struct {
+    tmp_dir: std.testing.TmpDir,
+    cwd: []const u8,
 
-test "End-To-End Create Darwin test2" {
-    try testArchiveCreation(.darwin, test1_dir, &test1_names, &test1_symbols);
-}
+    pub fn getInfo() !TestDirInfo {
+        var result: TestDirInfo = .{
+            .tmp_dir = std.testing.tmpDir(.{}),
+            .cwd = undefined,
+        };
+        result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
+            "zig-cache", "tmp", &result.tmp_dir.sub_path,
+        });
+        return result;
+    }
 
-test "End-To-End Create GNU test4" {
-    try testArchiveCreation(.gnu, test4_dir, &test4_names, &test4_symbols);
-}
-
-test "End-To-End Create BSD test4" {
-    try testArchiveCreation(.bsd, test4_dir, &test4_names, &test4_symbols);
-}
-
-test "End-To-End Create Darwin test4" {
-    try testArchiveCreation(.darwin, test4_dir, &test4_names, &test4_symbols);
-}
-
-test "End-To-End Create GNU test5" {
-    try testArchiveCreation(.gnu, test5_dir, &test5_names, &test5_symbols);
-}
-
-test "End-To-End Create BSD test5" {
-    try testArchiveCreation(.bsd, test5_dir, &test5_names, &test5_symbols);
-}
-
-test "End-To-End Create Darwin test5" {
-    try testArchiveCreation(.darwin, test5_dir, &test5_names, &test5_symbols);
-}
+    pub fn cleanup(self: *TestDirInfo) void {
+        self.tmp_dir.cleanup();
+        std.testing.allocator.free(self.cwd);
+    }
+};
 
 fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
@@ -250,37 +287,6 @@ fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8
     }
 }
 
-const LlvmFormat = enum { gnu, bsd, darwin };
-
-const TestDirInfo = struct {
-    tmp_dir: std.testing.TmpDir,
-    cwd: []const u8,
-
-    pub fn getInfo() !TestDirInfo {
-        var result: TestDirInfo = .{
-            .tmp_dir = std.testing.tmpDir(.{}),
-            .cwd = undefined,
-        };
-        result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
-            "zig-cache", "tmp", &result.tmp_dir.sub_path,
-        });
-        return result;
-    }
-
-    pub fn cleanup(self: *TestDirInfo) void {
-        self.tmp_dir.cleanup();
-        std.testing.allocator.free(self.cwd);
-    }
-};
-
-fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
-    switch (format) {
-        .gnu => return "--format=gnu",
-        .bsd => return "--format=bsd",
-        .darwin => return "--format=darwin",
-    }
-}
-
 fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
@@ -302,7 +308,7 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     defer argv.deinit();
 
     try argv.append("zar");
-    try argv.append(llvmFormatToArgument(format));
+    try argv.append(format.llvmFormatToArgument());
 
     try argv.append(operation);
     try argv.append(zig_ar_archive_name);
@@ -321,7 +327,7 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
 
     try argv.append("zig");
     try argv.append("ar");
-    try argv.append(llvmFormatToArgument(format));
+    try argv.append(format.llvmFormatToArgument());
 
     try argv.append(operation);
     try argv.append(llvm_ar_archive_name);
