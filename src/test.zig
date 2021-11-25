@@ -44,6 +44,7 @@ const test5_symbols = [_][]const []const u8{
 // - Create "stress" tests that go beyond the basic tests & auto-generate a massive amount of
 //   archive input that can be tested against.
 // - Test the failure cases (and see how we handle them)
+// - Add parsing tests using archives created by native archivers on appropriate platforms
 // - Fuzz test
 
 test "List Files GNU test1" {
@@ -95,54 +96,54 @@ test "List Files Darwin test5" {
 }
 
 test "End-To-End Create GNU test1" {
-    try testArchiveCreation(.gnu, test1_dir, &test1_names);
+    try testArchiveCreation(.gnu, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "End-To-End Create BSD test1" {
-    try testArchiveCreation(.bsd, test1_dir, &test1_names);
+    try testArchiveCreation(.bsd, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "End-To-End Create Darwin test1" {
-    try testArchiveCreation(.darwin, test1_dir, &test1_names);
+    try testArchiveCreation(.darwin, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "End-To-End Create GNU test2" {
-    try testArchiveCreation(.gnu, test2_dir, &test2_names);
+    try testArchiveCreation(.gnu, test2_dir, &test2_names, &test2_symbols);
 }
 
 test "End-To-End Create BSD test2" {
-    try testArchiveCreation(.bsd, test2_dir, &test2_names);
+    try testArchiveCreation(.bsd, test2_dir, &test2_names, &test2_symbols);
 }
 
 test "End-To-End Create Darwin test2" {
-    try testArchiveCreation(.darwin, test1_dir, &test1_names);
+    try testArchiveCreation(.darwin, test1_dir, &test1_names, &test1_symbols);
 }
 
 test "End-To-End Create GNU test4" {
-    try testArchiveCreation(.gnu, test4_dir, &test4_names);
+    try testArchiveCreation(.gnu, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "End-To-End Create BSD test4" {
-    try testArchiveCreation(.bsd, test4_dir, &test4_names);
+    try testArchiveCreation(.bsd, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "End-To-End Create Darwin test4" {
-    try testArchiveCreation(.darwin, test4_dir, &test4_names);
+    try testArchiveCreation(.darwin, test4_dir, &test4_names, &test4_symbols);
 }
 
 test "End-To-End Create GNU test5" {
-    try testArchiveCreation(.gnu, test5_dir, &test5_names);
+    try testArchiveCreation(.gnu, test5_dir, &test5_names, &test5_symbols);
 }
 
 test "End-To-End Create BSD test5" {
-    try testArchiveCreation(.bsd, test5_dir, &test5_names);
+    try testArchiveCreation(.bsd, test5_dir, &test5_names, &test5_symbols);
 }
 
 test "End-To-End Create Darwin test5" {
-    try testArchiveCreation(.darwin, test5_dir, &test5_names);
+    try testArchiveCreation(.darwin, test5_dir, &test5_names, &test5_symbols);
 }
 
-fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8) !void {
+fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
     var test_dir_info = try TestDirInfo.getInfo();
     // if a test is going to fail anyway, this is a useful way to debug it for now..
     var cancel_cleanup = false;
@@ -152,6 +153,7 @@ fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []co
     // Create an archive with llvm ar & zar and confirm that the outputs match
     // byte-for-byte.
     try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
+    try generateCompiledFilesWithSymbols(file_names, symbol_names, test_dir_info);
 
     // TODO: the end-to-end test will interpret one of the files as
     // mach-O for some reason! So explicitly disable symbols for now.
@@ -166,7 +168,9 @@ fn testParsingOfLlvmGeneratedArchive(comptime format: LlvmFormat, comptime test_
     var test_dir_info = try TestDirInfo.getInfo();
     defer test_dir_info.cleanup();
 
+    _ = test_dir_path;
     try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
+    try generateCompiledFilesWithSymbols(file_names, symbol_names, test_dir_info);
     try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
     try testArchiveParsing(test_dir_info, file_names, symbol_names);
 }
@@ -278,10 +282,16 @@ fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
 }
 
 fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    const test_src_dir = try fs.cwd().openDir(test_src_dir_path, .{});
+    const test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
 
     for (file_names) |test_file| {
-        try std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{});
+        std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
     }
 }
 
@@ -326,5 +336,48 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
     defer {
         allocator.free(result.stdout);
         allocator.free(result.stderr);
+    }
+}
+
+fn generateCompiledFilesWithSymbols(file_names: []const []const u8, comptime symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+    const allocator = std.testing.allocator;
+
+    for (symbol_names) |file_symbols, index| {
+        const file_name = file_names[index];
+        const source_file_name = try std.fmt.allocPrint(allocator, "{s}.c", .{file_name});
+        defer allocator.free(source_file_name);
+        {
+            const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{});
+            defer source_file.close();
+
+            const writer = source_file.writer();
+            for (file_symbols) |symbol| {
+                try writer.print("extern int {s}(int a) {{ return a; }}\n", .{symbol});
+            }
+        }
+
+        var argv = std.ArrayList([]const u8).init(allocator);
+        defer argv.deinit();
+
+        try argv.append("zig");
+        try argv.append("cc");
+        try argv.append("-c");
+        try argv.append("-o");
+        try argv.append(file_name);
+        try argv.append(source_file_name);
+        try argv.append("-target");
+        // TODO: Test other target triples with appropriate corresponding archive format!
+        try argv.append("x86_64-linux");
+
+        const result = try std.ChildProcess.exec(.{
+            .allocator = allocator,
+            .argv = argv.items,
+            .cwd = test_dir_info.cwd,
+        });
+
+        defer {
+            allocator.free(result.stdout);
+            allocator.free(result.stderr);
+        }
     }
 }
