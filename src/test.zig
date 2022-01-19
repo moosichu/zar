@@ -252,7 +252,7 @@ fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var allocator = &arena.allocator;
+    var allocator = arena.allocator();
 
     var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{});
     try archive.parse(allocator);
@@ -317,7 +317,7 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    try main.archiveMain(test_dir_info.tmp_dir.dir, &arena.allocator, argv.items);
+    try main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), argv.items);
 }
 
 fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {

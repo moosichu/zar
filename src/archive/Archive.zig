@@ -127,6 +127,7 @@ pub const IoError = error{
     EndOfStream,
     BadPathName,
     DeviceBusy,
+    FileBusy,
     FileLocksNotSupported,
     FileNotFound,
     FileTooBig,
@@ -282,7 +283,7 @@ pub fn create(
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
-pub fn finalize(self: *Archive, allocator: *Allocator) !void {
+pub fn finalize(self: *Archive, allocator: Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
@@ -590,7 +591,7 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
     }
 }
 
-pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const u8) !void {
+pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u8) !void {
     for (file_names) |file_name| {
         // Open the file and read all of its contents
         const file = try self.dir.openFile(file_name, .{ .read = true });
@@ -743,7 +744,7 @@ pub fn insertFiles(self: *Archive, allocator: *Allocator, file_names: [][]const 
     }
 }
 
-pub fn parse(self: *Archive, allocator: *Allocator) (ParseError || IoError || CriticalError)!void {
+pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || CriticalError)!void {
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
@@ -1188,7 +1189,7 @@ pub const MRIParser = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: *Allocator, file: fs.File) !Self {
+    pub fn init(allocator: Allocator, file: fs.File) !Self {
         const self = Self{
             .script = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
             .archive = null,
@@ -1209,7 +1210,7 @@ pub const MRIParser = struct {
     }
 
     // Returns a slice of tokens
-    fn getTokenLine(allocator: *Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
+    fn getTokenLine(allocator: Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
         var list = std.ArrayList([]const u8).init(allocator);
         while (getToken(iter)) |tok| {
             try list.append(tok);
@@ -1217,7 +1218,7 @@ pub const MRIParser = struct {
         return list.toOwnedSlice();
     }
 
-    pub fn execute(self: *Self, allocator: *Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
+    pub fn execute(self: *Self, allocator: Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
         // Split the file into lines
         var parser = mem.split(u8, self.script, "\n");
 

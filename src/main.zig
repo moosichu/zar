@@ -125,7 +125,7 @@ pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var allocator = &arena.allocator;
+    var allocator = arena.allocator();
     const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
         return err;
     } else {
