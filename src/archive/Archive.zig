@@ -594,7 +594,7 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
 pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u8) !void {
     for (file_names) |file_name| {
         // Open the file and read all of its contents
-        const file = try self.dir.openFile(file_name, .{ .read = true });
+        const file = try self.dir.openFile(file_name, .{ .mode = .read_only });
         defer file.close();
 
         // We only need to do this because file stats don't include
@@ -1261,7 +1261,7 @@ pub const MRIParser = struct {
                             .clear => {
                                 // This is a bit of a hack but its reliable.
                                 // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
-                                const file = try self.dir.openFile(self.file_name.?, .{ .write = true });
+                                const file = try self.dir.openFile(self.file_name.?, .{ .mode = .read_write });
                                 self.archive = Archive.create(file, self.file_name.?);
 
                                 try self.archive.?.parse(allocator, stderr);
@@ -1280,7 +1280,7 @@ pub const MRIParser = struct {
                             .open => {
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try self.dir.openFile(file_name, .{ .write = true });
+                                const file = try self.dir.openFile(file_name, .{ .mode = .read_write });
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
 

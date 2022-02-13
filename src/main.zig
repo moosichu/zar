@@ -105,7 +105,7 @@ fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const
 }
 
 fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool) !fs.File {
-    const open_file_handle = cwd.openFile(archive_path, .{ .write = true }) catch |err| switch (err) {
+    const open_file_handle = cwd.openFile(archive_path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => {
             if (print_creation_warning) {
                 logger.warn("Creating new archive as none exists at path provided\n", .{});
