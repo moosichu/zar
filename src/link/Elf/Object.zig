@@ -34,7 +34,10 @@ pub fn deinit(self: *Object, allocator: Allocator) void {
     self.relocs.deinit(allocator);
     self.symtab.deinit(allocator);
     self.strtab.deinit(allocator);
-    allocator.free(self.name);
+    // ZAR MODIFICATION:
+    // We manage memory of assigned names ourselves in zar - so
+    // freeing this here for that does not make much sense.
+    // allocator.free(self.name);
 }
 
 pub fn parse(self: *Object, allocator: Allocator, target: std.Target) !void {

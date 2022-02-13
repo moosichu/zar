@@ -287,17 +287,6 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
-    if (self.output_archive_type == .ambiguous) {
-        // Set output archive type of one we might just have parsed...
-        self.output_archive_type = self.inferred_archive_type;
-    }
-
-    if (self.output_archive_type == .ambiguous) {
-        // if output archive type is still ambiguous (none was inferred, and
-        // none was set) then we need to infer it from the host platform!
-        self.output_archive_type = getDefaultArchiveTypeFromHost();
-    }
-
     const writer = self.file.writer();
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
@@ -436,7 +425,11 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         },
         .bsd, .darwin, .darwin64 => {
             // BSD format: Write the symbol table
-            if (symbol_table.items.len != 0) {
+            // In darwin if symbol table writing is enabled the expect behaviour
+            // is that we write an empty symbol table!
+            const write_symbol_table =
+                self.modifiers.build_symbol_table and (symbol_table.items.len != 0 or self.output_archive_type != .bsd);
+            if (write_symbol_table) {
                 while (symbol_table.items.len % self.output_archive_type.getAlignment() != 0)
                     try symbol_table.append(0);
 
@@ -668,6 +661,12 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
             try file.seekTo(0);
             blk: {
                 // TODO: Load object from memory (upstream zld)
+                // TODO(TRC):Now this should assert that the magic number is what we expect it to be
+                // based on the parsed archive type! Not inferring what we should do based on it.
+                // switch(self.output_archive_type)
+                // {
+
+                // }
                 if (mem.eql(u8, magic[0..], "\x7fELF")) {
                     var elf_file = Elf{ .file = file, .name = file_name };
                     defer elf_file.deinit(allocator);
@@ -692,6 +691,8 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                         }
                     }
                 } else {
+                    // TODO(TRC):Now this should assert that the magic number is what we expect it to be
+                    // based on the parsed archive type! Not inferring what we should do based on it.
                     const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
                     if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
@@ -712,7 +713,10 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                                 try self.symbols.append(allocator, symbol);
                             }
                         }
-                    } else {
+                    } else if (false) {
+                        // TODO: Figure out the condition under which a file is a coff
+                        // file. This was originally just an else clause - but a file
+                        // might not contain any symbols!
                         var coff_file = Coff{ .file = file, .name = file_name };
                         defer coff_file.deinit(allocator);
 
@@ -1166,6 +1170,18 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
         } else {
             symbol.file_index = invalid_file_index;
         }
+    }
+
+    // Set output archive type based on inference or current os if necessary
+    if (self.output_archive_type == .ambiguous) {
+        // Set output archive type of one we might just have parsed...
+        self.output_archive_type = self.inferred_archive_type;
+    }
+
+    if (self.output_archive_type == .ambiguous) {
+        // if output archive type is still ambiguous (none was inferred, and
+        // none was set) then we need to infer it from the host platform!
+        self.output_archive_type = getDefaultArchiveTypeFromHost();
     }
 }
 
