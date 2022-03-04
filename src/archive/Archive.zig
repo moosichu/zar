@@ -368,19 +368,23 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
 
-    // magic_string.len == magic_thin.len, so its not a problem
-    const file_offsets = try allocator.alloc(i32, self.files.items.len);
-    defer allocator.free(file_offsets);
+    const relative_file_offsets = try allocator.alloc(i32, self.files.items.len);
+    defer allocator.free(relative_file_offsets);
 
     {
-        var offset: i32 = magic_string.len;
+        var offset: u32 = 0;
         for (self.files.items) |file, idx| {
-            file_offsets[idx] = offset;
-            offset += @intCast(i32, @sizeOf(Header) + file.contents.bytes.len);
+            relative_file_offsets[idx] = @intCast(i32, offset);
+            offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
 
             // BSD also keeps the name in its data section
             if (self.output_archive_type.isBsdLike()) {
-                offset += @intCast(i32, file.name.len);
+                offset += @intCast(u32, file.name.len);
+
+                // Add padding
+                while (offset % self.output_archive_type.getAlignment() != 0) {
+                    offset += 1;
+                }
             }
         }
     }
@@ -441,15 +445,31 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
                     try writer.writeIntBig(u32, @intCast(u32, self.symbols.items.len));
                 }
 
-                for (self.symbols.items) |symbol| {
-                    const local_offset =
-                        @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
-                        if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
+                // magic_string.len == magic_thin.len, so its not a problem
+                var offset_to_files = magic_string.len;
+                // Size of symbol table itself
+                offset_to_files += @sizeOf(Header) + symbol_table_size;
 
+                // Add padding
+                while (offset_to_files % self.output_archive_type.getAlignment() != 0) {
+                    offset_to_files += 1;
+                }
+
+                // Size of string table
+                if (string_table.items.len != 0) {
+                    offset_to_files += @sizeOf(Header) + string_table.items.len;
+                }
+
+                // Add further padding
+                while (offset_to_files % self.output_archive_type.getAlignment() != 0) {
+                    offset_to_files += 1;
+                }
+
+                for (self.symbols.items) |symbol| {
                     if (format == .gnu64) {
-                        try writer.writeIntBig(i64, file_offsets[symbol.file_index] + @intCast(i64, local_offset));
+                        try writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @intCast(i64, offset_to_files));
                     } else {
-                        try writer.writeIntBig(i32, file_offsets[symbol.file_index] + @intCast(i32, local_offset));
+                        try writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files));
                     }
                 }
 
@@ -504,9 +524,16 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
                 const ranlibs = try allocator.alloc(Ranlib(IntType), self.symbols.items.len);
                 defer allocator.free(ranlibs);
 
+                var offset_to_files: usize = magic_string.len + @sizeOf(Header) + symbol_table_size;
+
+                // Add padding
+                while (offset_to_files % self.output_archive_type.getAlignment() != 0) {
+                    offset_to_files += 1;
+                }
+
                 for (self.symbols.items) |symbol, idx| {
                     ranlibs[idx].ran_strx = symbol_string_table_and_offsets.symbol_offsets[idx];
-                    ranlibs[idx].ran_off = file_offsets[symbol.file_index] + @sizeOf(Header) + @intCast(i32, symbol_table_size);
+                    ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files);
                 }
 
                 try writer.writeAll(mem.sliceAsBytes(ranlibs));

@@ -198,7 +198,7 @@ fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []co
     // TODO: the end-to-end test will interpret one of the files as
     // mach-O for some reason! So explicitly disable symbols for now.
     // (this needs fixing!)
-    const operation = "rSc";
+    const operation = "rc";
     try doLlvmArchiveOperation(format, operation, file_names, test_dir_info);
     try doZarArchiveOperation(format, operation, file_names, test_dir_info);
     try compareGeneratedArchives(test_dir_info);
