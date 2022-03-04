@@ -123,7 +123,7 @@ fn createFileArray(comptime num_files: comptime_int) [num_files][]const u8 {
 fn createInFileSymbolArray(comptime file_index: comptime_int, comptime num_symbols: comptime_int) [num_symbols][]const u8 {
     comptime var aggregator: [num_symbols][]const u8 = undefined;
     for (aggregator) |_, index| {
-        aggregator[index] = std.fmt.comptimePrint("symbol_{}_file_{}", .{index, file_index});
+        aggregator[index] = std.fmt.comptimePrint("symbol_{}_file_{}", .{ index, file_index });
     }
     return aggregator;
 }
@@ -185,7 +185,10 @@ fn testArchiveCreation(comptime format: LlvmFormat, comptime test_dir_path: []co
     // if a test is going to fail anyway, this is a useful way to debug it for now..
     var cancel_cleanup = false;
     defer if (!cancel_cleanup) test_dir_info.cleanup();
-    errdefer cancel_cleanup = true;
+    errdefer {
+        logger.err("Failed on format {}", .{format});
+        cancel_cleanup = true;
+    }
 
     // Create an archive with llvm ar & zar and confirm that the outputs match
     // byte-for-byte.

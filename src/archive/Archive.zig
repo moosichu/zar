@@ -217,6 +217,14 @@ pub const Symbol = struct {
     file_index: u64,
 };
 
+// TODO: BSD symbol table interpretation is architecture dependent,
+// is there a way we can interpret this? (will be needed for
+// cross-compilation etc. could possibly take it as a spec?)
+// Using harcoding this information here is a bit of a hacky
+// workaround in the short term - even though it is part of
+// the spec.
+const IntType = i32;
+
 // type of ranlib used depends on the archive storage format
 fn Ranlib(comptime storage: type) type {
     return extern struct {
@@ -280,6 +288,58 @@ pub fn create(
     };
 }
 
+const SymbolStringTableAndOffsets = struct {
+    unpadded_symbol_table_length: i32,
+    symbol_table: []u8,
+    symbol_offsets: []i32,
+
+    pub fn deinit(self: *const SymbolStringTableAndOffsets, allocator: Allocator) void {
+        allocator.free(self.symbol_offsets);
+        allocator.free(self.symbol_table);
+    }
+};
+
+pub fn buildSymbolTable(
+    self: *Archive,
+    allocator: Allocator,
+) !SymbolStringTableAndOffsets {
+    var symbol_table_size: usize = 0;
+    const symbol_offsets = try allocator.alloc(i32, self.symbols.items.len);
+    errdefer allocator.free(symbol_offsets);
+
+    for (self.symbols.items) |symbol, idx| {
+        symbol_offsets[idx] = @intCast(i32, symbol_table_size);
+        symbol_table_size += symbol.name.len + 1;
+    }
+
+    const unpadded_symbol_table_length = symbol_table_size;
+
+    while (symbol_table_size % self.output_archive_type.getAlignment() != 0) {
+        symbol_table_size += 1;
+    }
+
+    const symbol_table = try allocator.alloc(u8, symbol_table_size);
+    symbol_table_size = 0;
+
+    for (self.symbols.items) |symbol| {
+        mem.copy(u8, symbol_table[symbol_table_size..(symbol.name.len + symbol_table_size)], symbol.name);
+        symbol_table[symbol_table_size + symbol.name.len] = 0;
+        symbol_table_size += symbol.name.len + 1;
+    }
+
+    while (symbol_table_size % self.output_archive_type.getAlignment() != 0) {
+        symbol_table[symbol_table_size] = 0;
+        symbol_table_size += 1;
+    }
+
+    const result: SymbolStringTableAndOffsets = .{
+        .unpadded_symbol_table_length = @intCast(i32, unpadded_symbol_table_length),
+        .symbol_table = symbol_table,
+        .symbol_offsets = symbol_offsets,
+    };
+    return result;
+}
+
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
@@ -305,40 +365,24 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
 
-    // Calculate common symbol table information
-    const RanlibSymbol = struct {
-        file_offset: u32,
-        string_offset: u32,
-    };
-
-    var symbols = try allocator.alloc(RanlibSymbol, self.symbols.items.len);
-    defer allocator.free(symbols);
-
-    var symbol_table = std.ArrayList(u8).init(allocator);
-    defer symbol_table.deinit();
-
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
-    var offset: u32 = magic_string.len; // magic_string.len == magic_thin.len, so its not a problem
-    const file_offset = try allocator.alloc(u32, self.files.items.len);
-    defer allocator.free(file_offset);
 
-    for (self.files.items) |file, idx| {
-        file_offset[idx] = offset;
-        offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+    // magic_string.len == magic_thin.len, so its not a problem
+    const file_offsets = try allocator.alloc(i32, self.files.items.len);
+    defer allocator.free(file_offsets);
 
-        // BSD also keeps the name in its data section
-        if (self.output_archive_type.isBsdLike())
-            offset += @intCast(u32, file.name.len);
-    }
+    {
+        var offset: i32 = magic_string.len;
+        for (self.files.items) |file, idx| {
+            file_offsets[idx] = offset;
+            offset += @intCast(i32, @sizeOf(Header) + file.contents.bytes.len);
 
-    for (self.symbols.items) |symbol, idx| {
-        symbols[idx].string_offset = @intCast(u32, symbol_table.items.len);
-
-        try symbol_table.appendSlice(symbol.name);
-        try symbol_table.append(0);
-
-        symbols[idx].file_offset = file_offset[symbol.file_index];
+            // BSD also keeps the name in its data section
+            if (self.output_archive_type.isBsdLike()) {
+                offset += @intCast(i32, file.name.len);
+            }
+        }
     }
 
     // Set the mtime of symbol table to now seconds in non-deterministic mode
@@ -373,45 +417,43 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
             }
 
             // Write the symbol table itself
-            {
-                if (symbol_table.items.len != 0) {
-                    while (symbol_table.items.len % self.output_archive_type.getAlignment() != 0)
-                        try symbol_table.append(0);
+            if (self.modifiers.build_symbol_table and self.symbols.items.len != 0) {
+                const symbol_string_table_and_offsets = try self.buildSymbolTable(allocator);
+                defer symbol_string_table_and_offsets.deinit(allocator);
 
-                    const format = self.output_archive_type;
-                    const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
+                const symbol_table = symbol_string_table_and_offsets.symbol_table;
 
-                    const symbol_table_size =
-                        symbol_table.items.len + // The string of symbols
-                        (symbols.len * int_size) + // Size of all symbol offsets
-                        int_size; // Value denoting the length of symbol table
+                const format = self.output_archive_type;
+                const int_size: usize = if (format == .gnu64) @sizeOf(u64) else @sizeOf(u32);
 
-                    const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
+                const symbol_table_size =
+                    symbol_table.len + // The string of symbols
+                    (self.symbols.items.len * int_size) + // Size of all symbol offsets
+                    int_size; // Value denoting the length of symbol table
 
-                    try writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size });
+                const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
+
+                try writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size });
+
+                if (format == .gnu64) {
+                    try writer.writeIntBig(u64, @intCast(u64, self.symbols.items.len));
+                } else {
+                    try writer.writeIntBig(u32, @intCast(u32, self.symbols.items.len));
+                }
+
+                for (self.symbols.items) |symbol| {
+                    const local_offset =
+                        @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
+                        if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
 
                     if (format == .gnu64) {
-                        try writer.writeIntBig(u64, @intCast(u64, symbols.len));
+                        try writer.writeIntBig(i64, file_offsets[symbol.file_index] + @intCast(i64, local_offset));
                     } else {
-                        try writer.writeIntBig(u32, @intCast(u32, symbols.len));
+                        try writer.writeIntBig(i32, file_offsets[symbol.file_index] + @intCast(i32, local_offset));
                     }
-
-                    for (symbols) |sym| {
-                        // zig fmt: off
-                        const local_offset =
-                            @sizeOf(Header) + symbol_table_size + // Size of symbol table itself
-                            if (string_table.items.len != 0) @sizeOf(Header) + string_table.items.len else 0; // Size of string table
-                        // zig fmt: on
-
-                        if (format == .gnu64) {
-                            try writer.writeIntBig(u64, sym.file_offset + @intCast(u64, local_offset));
-                        } else {
-                            try writer.writeIntBig(u32, sym.file_offset + @intCast(u32, local_offset));
-                        }
-                    }
-
-                    try writer.writeAll(symbol_table.items);
                 }
+
+                try writer.writeAll(symbol_table);
             }
 
             // Write the string table itself
@@ -425,24 +467,27 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         },
         .bsd, .darwin, .darwin64 => {
             // BSD format: Write the symbol table
-            // In darwin if symbol table writing is enabled the expect behaviour
+            // In darwin if symbol table writing is enabled the expected behaviour
             // is that we write an empty symbol table!
             const write_symbol_table =
-                self.modifiers.build_symbol_table and (symbol_table.items.len != 0 or self.output_archive_type != .bsd);
+                self.modifiers.build_symbol_table and (self.symbols.items.len != 0 or self.output_archive_type != .bsd);
             if (write_symbol_table) {
-                while (symbol_table.items.len % self.output_archive_type.getAlignment() != 0)
-                    try symbol_table.append(0);
+                const symbol_string_table_and_offsets = try self.buildSymbolTable(allocator);
+                defer symbol_string_table_and_offsets.deinit(allocator);
+
+                const symbol_table = symbol_string_table_and_offsets.symbol_table;
 
                 const format = self.output_archive_type;
                 const int_size: usize = if (format == .darwin64) @sizeOf(u64) else @sizeOf(u32);
 
-                const ranlib_size = symbols.len * (int_size * 2);
+                const num_ranlib_bytes = self.symbols.items.len * @sizeOf(Ranlib(IntType));
+
                 const symbol_table_size =
                     bsd_symdef_64_magic.len + // Length of name
                     int_size + // Int describing the size of ranlib
-                    ranlib_size + // Size of ranlib structs
+                    num_ranlib_bytes + // Size of ranlib structs
                     int_size + // Int describing size of symbol table's strings
-                    symbol_table.items.len; // The lengths of strings themselves
+                    symbol_table.len; // The lengths of strings themselves
 
                 try writer.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size });
 
@@ -450,31 +495,29 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
                 if (format == .darwin64) {
                     try writer.writeAll(bsd_symdef_64_magic);
-                    try writer.writeInt(u64, @intCast(u64, ranlib_size), endian);
+                    try writer.writeInt(u64, @intCast(u64, num_ranlib_bytes), endian);
                 } else {
                     try writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00");
-                    try writer.writeInt(u32, @intCast(u32, ranlib_size), endian);
+                    try writer.writeInt(u32, @intCast(u32, num_ranlib_bytes), endian);
                 }
 
-                for (symbols) |sym| {
-                    const local_offset = @sizeOf(Header) + symbol_table_size;
-                    const solved_offset = local_offset + sym.file_offset;
+                const ranlibs = try allocator.alloc(Ranlib(IntType), self.symbols.items.len);
+                defer allocator.free(ranlibs);
 
-                    if (format == .darwin64) {
-                        try writer.writeInt(u64, sym.string_offset, endian);
-                        try writer.writeInt(u64, @intCast(u64, solved_offset), endian);
-                    } else {
-                        try writer.writeInt(u32, sym.string_offset, endian);
-                        try writer.writeInt(u32, @intCast(u32, solved_offset), endian);
-                    }
+                for (self.symbols.items) |symbol, idx| {
+                    ranlibs[idx].ran_strx = symbol_string_table_and_offsets.symbol_offsets[idx];
+                    ranlibs[idx].ran_off = file_offsets[symbol.file_index] + @sizeOf(Header) + @intCast(i32, symbol_table_size);
                 }
+
+                try writer.writeAll(mem.sliceAsBytes(ranlibs));
+
                 if (format == .darwin64) {
-                    try writer.writeInt(u64, @intCast(u64, symbol_table.items.len), endian);
+                    try writer.writeInt(u64, @intCast(u64, symbol_string_table_and_offsets.unpadded_symbol_table_length), endian);
                 } else {
-                    try writer.writeInt(u32, @intCast(u32, symbol_table.items.len), endian);
+                    try writer.writeInt(u32, @intCast(u32, symbol_string_table_and_offsets.unpadded_symbol_table_length), endian);
                 }
 
-                try writer.writeAll(symbol_table.items);
+                try writer.writeAll(symbol_table);
             }
         },
         else => unreachable,
@@ -1047,13 +1090,6 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
                 };
 
                 if (magic_match) {
-                    // TODO: BSD symbol table interpretation is architecture dependent,
-                    // is there a way we can interpret this? (will be needed for
-                    // cross-compilation etc. could possibly take it as a spec?)
-                    // Using harcoding this information here is a bit of a hacky
-                    // workaround in the short term - even though it is part of
-                    // the spec.
-                    const IntType = i32;
                     // TODO: make this target arch endianess
                     const endianess = .Little;
 
