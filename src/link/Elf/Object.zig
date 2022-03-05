@@ -11,6 +11,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const Atom = @import("Atom.zig");
 const Elf = @import("../Elf.zig");
+pub const magic = "\x7fELF";
 
 file: fs.File,
 name: []const u8,
@@ -47,8 +48,8 @@ pub fn parse(self: *Object, allocator: Allocator, target: std.Target) !void {
     }
     const header = try reader.readStruct(elf.Elf64_Ehdr);
 
-    if (!mem.eql(u8, header.e_ident[0..4], "\x7fELF")) {
-        log.debug("Invalid ELF magic {s}, expected \x7fELF", .{header.e_ident[0..4]});
+    if (!mem.eql(u8, header.e_ident[0..4], magic)) {
+        log.debug("Invalid ELF magic {s}, expected " ++ magic, .{header.e_ident[0..4]});
         return error.NotObject;
     }
     if (header.e_ident[elf.EI_VERSION] != 1) {

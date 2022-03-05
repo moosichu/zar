@@ -11,6 +11,7 @@ const Elf = @import("../link/Elf/Object.zig");
 const MachO = @import("../link/MachO/Object.zig");
 const macho = std.macho;
 const Coff = @import("../link/Coff/Object.zig");
+const Bitcode = @import("../link/Bitcode/Object.zig");
 const coff = std.coff;
 
 const Allocator = std.mem.Allocator;
@@ -344,6 +345,12 @@ pub fn buildSymbolTable(
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive, allocator: Allocator) !void {
+    if (self.output_archive_type == .ambiguous) {
+        // if output archive type is still ambiguous (none was inferred, and
+        // none was set) then we need to infer it from the host platform!
+        self.output_archive_type = getDefaultArchiveTypeFromHost();
+    }
+
     // Overwrite all contents
     try self.file.seekTo(0);
 
@@ -547,6 +554,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
                 try writer.writeAll(symbol_table);
             }
         },
+        // This needs to be able to tell whatsupp.
         else => unreachable,
     }
 
@@ -737,7 +745,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                 // {
 
                 // }
-                if (mem.eql(u8, magic[0..], "\x7fELF")) {
+                if (mem.eql(u8, magic[0..Elf.magic.len], Elf.magic)) {
                     var elf_file = Elf{ .file = file, .name = file_name };
                     defer elf_file.deinit(allocator);
 
@@ -760,6 +768,8 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                             else => {},
                         }
                     }
+                } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
+                    logger.warn("Here!", .{});
                 } else {
                     // TODO(TRC):Now this should assert that the magic number is what we expect it to be
                     // based on the parsed archive type! Not inferring what we should do based on it.
@@ -1239,12 +1249,6 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
     if (self.output_archive_type == .ambiguous) {
         // Set output archive type of one we might just have parsed...
         self.output_archive_type = self.inferred_archive_type;
-    }
-
-    if (self.output_archive_type == .ambiguous) {
-        // if output archive type is still ambiguous (none was inferred, and
-        // none was set) then we need to infer it from the host platform!
-        self.output_archive_type = getDefaultArchiveTypeFromHost();
     }
 }
 
