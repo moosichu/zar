@@ -749,6 +749,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                     var elf_file = Elf{ .file = file, .name = file_name };
                     defer elf_file.deinit(allocator);
 
+                    // TODO: Do not use builtin.target like this, be more flexible!
                     elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
                         error.NotObject => break :blk,
                         else => |e| return e,
@@ -769,7 +770,17 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                         }
                     }
                 } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
-                    logger.warn("Here!", .{});
+                    logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{file_name});
+                    break :blk;
+
+                    // var bitcode_file = Bitcode{ .file = file, .name = file_name };
+                    // defer bitcode_file.deinit(allocator);
+
+                    // // TODO: Do not use builtin.target like this, be more flexible!
+                    // bitcode_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                    //     error.NotObject => break :blk,
+                    //     else => |e| return e,
+                    //};
                 } else {
                     // TODO(TRC):Now this should assert that the magic number is what we expect it to be
                     // based on the parsed archive type! Not inferring what we should do based on it.
