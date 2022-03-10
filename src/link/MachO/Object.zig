@@ -167,18 +167,19 @@ pub fn parse(self: *Object, allocator: Allocator, target: std.Target) !void {
         return error.NotObject;
     }
 
-    const this_arch: std.Target.Cpu.Arch = switch (header.cputype) {
-        macho.CPU_TYPE_ARM64 => .aarch64,
-        macho.CPU_TYPE_X86_64 => .x86_64,
-        else => |value| {
-            log.err("unsupported cpu architecture 0x{x}", .{value});
-            return error.UnsupportedCpuArchitecture;
-        },
-    };
-    if (this_arch != target.cpu.arch) {
-        log.err("mismatched cpu architecture: expected {s}, found {s}", .{ target.cpu.arch, this_arch });
-        return error.MismatchedCpuArchitecture;
-    }
+    _ = target;
+    // const this_arch: std.Target.Cpu.Arch = switch (header.cputype) {
+    //     macho.CPU_TYPE_ARM64 => .aarch64,
+    //     macho.CPU_TYPE_X86_64 => .x86_64,
+    //     else => |value| {
+    //         log.err("unsupported cpu architecture 0x{x}", .{value});
+    //         return error.UnsupportedCpuArchitecture;
+    //     },
+    // };
+    // if (this_arch != target.cpu.arch) {
+    //     log.err("mismatched cpu architecture: expected {s}, found {s}", .{ target.cpu.arch, this_arch });
+    //     return error.MismatchedCpuArchitecture;
+    // }
 
     self.header = header;
 

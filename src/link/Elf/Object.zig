@@ -68,13 +68,14 @@ pub fn parse(self: *Object, allocator: Allocator, target: std.Target) !void {
         log.debug("Invalid file type {any}, expected ET.REL", .{header.e_type});
         return error.NotObject;
     }
-    if (header.e_machine != target.cpu.arch.toElfMachine()) {
-        log.debug("Invalid architecture {any}, expected {any}", .{
-            header.e_machine,
-            target.cpu.arch.toElfMachine(),
-        });
-        return error.InvalidCpuArch;
-    }
+    _ = target;
+    // if (header.e_machine != target.cpu.arch.toElfMachine()) {
+    //     log.debug("Invalid architecture {any}, expected {any}", .{
+    //         header.e_machine,
+    //         target.cpu.arch.toElfMachine(),
+    //     });
+    //     return error.InvalidCpuArch;
+    // }
     if (header.e_version != 1) {
         log.debug("Invalid ELF version {d}, expected 1", .{header.e_version});
         return error.NotObject;

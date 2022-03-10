@@ -191,6 +191,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
                 keep_processing_current_option = true;
                 arg_index = arg_index + 1;
                 continue;
+            } else if (args[arg_index].len == 0) {
+                keep_processing_current_option = true;
+                arg_index = arg_index + 1;
+                continue;
             } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
                 try stdout.print(overview, .{});
                 return;
