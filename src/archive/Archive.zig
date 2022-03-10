@@ -120,6 +120,7 @@ pub const IoError = error{
     InputOutput,
     IsDir,
     NotOpenForReading,
+    InvalidHandle,
     OperationAborted,
     SystemResources,
     Unexpected,
