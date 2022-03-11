@@ -797,11 +797,12 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                         };
 
                         for (macho_file.symtab.items) |sym| {
-                            if (sym.n_type & macho.N_TYPE == macho.N_SECT) {
+                            if (sym.ext() and sym.sect()) {
                                 const symbol = Symbol{
                                     .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
                                     .file_index = file_index,
                                 };
+
                                 try self.symbols.append(allocator, symbol);
                             }
                         }

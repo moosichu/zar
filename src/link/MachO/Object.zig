@@ -136,7 +136,10 @@ pub fn deinit(self: *Object, allocator: Allocator) void {
     self.sections_as_symbols.deinit(allocator);
     self.symbol_mapping.deinit(allocator);
     self.reverse_symbol_mapping.deinit(allocator);
-    allocator.free(self.name);
+    // ZAR MODIFICATION:
+    // We manage memory of assigned names ourselves in zar - so
+    // freeing this here for that does not make much sense.
+    // allocator.free(self.name);
     self.contained_atoms.deinit(allocator);
 
     if (self.debug_info) |*db| {
