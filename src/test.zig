@@ -184,21 +184,21 @@ const Target = struct {
 
 const OperatingSystem = enum {
     linux,
-    // macos,
+    macos,
     freebsd,
     // windows,
 
     fn toLlvmFormat(operating_system: OperatingSystem) LlvmFormat {
         return switch (operating_system) {
             .linux => .gnu,
-            // .macos => .darwin,
+            .macos => .darwin,
             .freebsd => .bsd,
         };
     }
 };
 
 const Architecture = enum {
-    // aarch64,
+    aarch64,
     x86_64,
 };
 
@@ -285,7 +285,7 @@ fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: L
     try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
     try generateCompiledFilesWithSymbols(target, file_names, symbol_names, test_dir_info);
     try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
-    try testArchiveParsing(test_dir_info, file_names, symbol_names);
+    try testArchiveParsing(target, test_dir_info, file_names, symbol_names);
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
@@ -319,7 +319,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
     const test_dir = test_dir_info.tmp_dir.dir;
 
     const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{});
@@ -356,7 +356,14 @@ fn testArchiveParsing(test_dir_info: TestDirInfo, file_names: []const []const u8
     for (symbol_names) |symbol_names_in_file, file_index| {
         for (symbol_names_in_file) |symbol_name| {
             const parsed_symbol = archive.symbols.items[current_index];
-            try testing.expect(mem.eql(u8, parsed_symbol.name, symbol_name));
+            var parsed_symbol_name = parsed_symbol.name;
+            // macos targets will prepend symbol names with underscores
+            if(target.operating_system == .macos)
+            {
+                try testing.expect(parsed_symbol_name[0] == '_');
+                parsed_symbol_name = parsed_symbol_name[1..parsed_symbol_name.len];
+            }
+            try testing.expect(mem.eql(u8, parsed_symbol_name, symbol_name));
             try testing.expect(mem.eql(u8, archive.files.items[parsed_symbol.file_index].name, file_names[file_index]));
             current_index = current_index + 1;
         }

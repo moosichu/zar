@@ -747,6 +747,10 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
 
                 // }
                 if (mem.eql(u8, magic[0..Elf.magic.len], Elf.magic)) {
+                    if (self.output_archive_type == .ambiguous) {
+                        // TODO: double check that this is the correct inference
+                        self.output_archive_type = .gnu;
+                    }
                     var elf_file = Elf{ .file = file, .name = file_name };
                     defer elf_file.deinit(allocator);
 
@@ -788,6 +792,9 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
                     const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
                     if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+                        if (self.output_archive_type == .ambiguous) {
+                            self.output_archive_type = .darwin;
+                        }
                         var macho_file = MachO{ .file = file, .name = file_name };
                         defer macho_file.deinit(allocator);
 
