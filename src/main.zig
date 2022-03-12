@@ -258,8 +258,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
                 'v' => modifiers.verbose = true,
                 's' => modifiers.build_symbol_table = true,
                 'S' => modifiers.build_symbol_table = false,
-                'r' => modifiers.sort_symbol_table = true,
-                'R' => modifiers.sort_symbol_table = false,
+                'r' => modifiers.sort_symbol_table = .set_true,
+                'R' => modifiers.sort_symbol_table = .set_false,
                 // TODO: should we print warning with unknown modifier?
                 else => {},
             }

@@ -179,14 +179,16 @@ pub const Header = extern struct {
     pub const format_string = "{s: <16}{: <12}{: <6}{: <6}{: <8}{: <10}`\n";
 };
 
-pub const Modifiers = extern struct {
+pub const ExplicitBooleanSetting = enum { ambiguous, set_true, set_false };
+
+pub const Modifiers = struct {
     // Supress warning for file creation
     create: bool = false,
     // Only insert files with more recent timestamps than archive
     update_only: bool = false,
     use_real_timestamps_and_ids: bool = false,
     build_symbol_table: bool = true,
-    sort_symbol_table: bool = false,
+    sort_symbol_table: ExplicitBooleanSetting = .ambiguous,
     verbose: bool = false,
 };
 
@@ -262,11 +264,16 @@ pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, 
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    if (builtin.os.tag.isDarwin()) return .darwin;
-    switch (builtin.os.tag) {
-        .windows => return .coff,
-        else => return .gnu,
-    }
+    // LLVM ar seems to default to gnu-style archives if nothing has been
+    // inferred up to this point.
+    // TODO: Figure out why this is needed to pass tests on macOS as this seems
+    // to contradict docs/code?
+    return .gnu;
+    // if (builtin.os.tag.isDarwin()) return .darwin;
+    // switch (builtin.os.tag) {
+    //     .windows => return .coff,
+    //     else => return .gnu,
+    // }
 }
 
 pub fn create(
@@ -369,7 +376,12 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     };
 
     // Sort the symbols
-    if (self.modifiers.sort_symbol_table) {
+    const sort_symbol_table = switch (self.modifiers.sort_symbol_table) {
+        .ambiguous => self.output_archive_type.isDarwin(),
+        .set_true => true,
+        .set_false => false,
+    };
+    if (sort_symbol_table) {
         std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
     }
 
