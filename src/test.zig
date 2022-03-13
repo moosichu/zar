@@ -27,45 +27,25 @@ const no_dir = "test/data/none";
 // - Fuzz test
 // - Test weird combinations and try to match llvm-ar output
 // - Test multiple os/format combinations (i.e. bsd style archives)
+// - Test ranlib functionality
+// - Test bad inputs/
+// - Test performance
+// - Don't redo work between tests (compiling same files, running llvm ar multiple times).
 
 const test1_dir = "test/data/test1";
 const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
 const test1_symbols = no_symbols;
 
-test "Parse Archive 1" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testParsingOfLlvmGeneratedArchive(target, .implicit, test1_dir, &test1_names, &test1_symbols);
-        try testParsingOfLlvmGeneratedArchive(target, llvm_format, test1_dir, &test1_names, &test1_symbols);
-    }
-}
-
-test "Create Archive 1" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, test1_dir, &test1_names, &test1_symbols);
-        try testArchiveCreation(target, llvm_format, test1_dir, &test1_names, &test1_symbols);
-    }
+test "Test Archive 1" {
+    try doStandardTests(test1_dir, &test1_names, &test1_symbols);
 }
 
 const test2_dir = "test/data/test2";
 const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
 const test2_symbols = no_symbols;
 
-test "Parse Archive 2" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testParsingOfLlvmGeneratedArchive(target, .implicit, test2_dir, &test2_names, &test2_symbols);
-        try testParsingOfLlvmGeneratedArchive(target, llvm_format, test2_dir, &test2_names, &test2_symbols);
-    }
-}
-
-test "Create Archive 2" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, test2_dir, &test2_names, &test2_symbols);
-        try testArchiveCreation(target, llvm_format, test2_dir, &test2_names, &test2_symbols);
-    }
+test "Test Archive 2" {
+    try doStandardTests(test2_dir, &test2_names, &test2_symbols);
 }
 
 const test4_names = [_][]const u8{"input1.o"};
@@ -73,20 +53,8 @@ const test4_symbols = [_][]const []const u8{
     &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
 };
 
-test "Parse Archive 4" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testParsingOfLlvmGeneratedArchive(target, .implicit, no_dir, &test4_names, &test4_symbols);
-        try testParsingOfLlvmGeneratedArchive(target, llvm_format, no_dir, &test4_names, &test4_symbols);
-    }
-}
-
-test "Create Archive 4" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, no_dir, &test4_names, &test4_symbols);
-        try testArchiveCreation(target, llvm_format, no_dir, &test4_names, &test4_symbols);
-    }
+test "Test Archive 4" {
+    try doStandardTests(no_dir, &test4_names, &test4_symbols);
 }
 
 const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
@@ -96,20 +64,8 @@ const test5_symbols = [_][]const []const u8{
     &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
 };
 
-test "Parse Archive 5" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testParsingOfLlvmGeneratedArchive(target, .implicit, no_dir, &test5_names, &test5_symbols);
-        try testParsingOfLlvmGeneratedArchive(target, llvm_format, no_dir, &test5_names, &test5_symbols);
-    }
-}
-
-test "Create Archive 5" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, no_dir, &test5_names, &test5_symbols);
-        try testArchiveCreation(target, llvm_format, no_dir, &test5_names, &test5_symbols);
-    }
+test "Test Archive 5" {
+    try doStandardTests(no_dir, &test5_names, &test5_symbols);
 }
 
 const test6_filecount = 55;
@@ -118,20 +74,8 @@ const test6_symcount = 15;
 const test6_names = createFileArray(test6_filecount);
 const test6_symbols = createSymbolArray(&test6_names, test6_symcount);
 
-test "Parse Archive 6" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testParsingOfLlvmGeneratedArchive(target, .implicit, no_dir, &test6_names, &test6_symbols);
-        try testParsingOfLlvmGeneratedArchive(target, llvm_format, no_dir, &test6_names, &test6_symbols);
-    }
-}
-
-test "Create Archive 6" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, no_dir, &test6_names, &test6_symbols);
-        try testArchiveCreation(target, llvm_format, no_dir, &test6_names, &test6_symbols);
-    }
+test "Test Archive 6" {
+    try doStandardTests(no_dir, &test6_names, &test6_symbols);
 }
 
 const test_sort_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
@@ -149,12 +93,9 @@ const test_sort = [_][]const []const u8{
     &[_][]const u8{ "_11", "_12", "_13" },
 };
 
-test "Create Archive Sorted" {
-    inline for (targets) |target| {
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try testArchiveCreation(target, .implicit, no_dir, &test_sort_names, &test_sort);
-        try testArchiveCreation(target, llvm_format, no_dir, &test_sort_names, &test_sort);
-    }
+test "Test Archive Sorted" {
+    // TODO: remove redundancy maybe by excluding parsing component of this test?
+    try doStandardTests(no_dir, &test_sort_names, &test_sort);
 }
 
 fn createFileArray(comptime num_files: comptime_int) [num_files][]const u8 {
@@ -273,43 +214,71 @@ const TestDirInfo = struct {
     }
 };
 
-fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
-    var test_dir_info = try TestDirInfo.getInfo();
-    // if a test is going to fail anyway, this is a useful way to debug it for now..
-    var cancel_cleanup = false;
-    defer if (!cancel_cleanup) test_dir_info.cleanup();
+pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+    const operation = "rc";
+
+    inline for (targets) |target| {
+        var test_dir_info = try TestDirInfo.getInfo();
+        // if a test is going to fail anyway, this is a useful way to debug it for now..
+        var cancel_cleanup = false;
+        defer if (!cancel_cleanup) test_dir_info.cleanup();
+        errdefer {
+            cancel_cleanup = true;
+        }
+
+        // Create an archive with llvm ar & zar and confirm that the outputs match
+        // byte-for-byte.
+        try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
+        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
+        try generateCompiledFilesWithSymbols(target, file_names, symbol_names, test_dir_info);
+
+        {
+            try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
+            defer {
+                test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name) catch |err| {
+                    logger.warn("error {} deleting {s}", .{ err, llvm_ar_archive_name });
+                };
+            }
+            try testParsingOfLlvmGeneratedArchive(target, .implicit, file_names, symbol_names, test_dir_info);
+            try testArchiveCreation(target, .implicit, file_names, test_dir_info);
+        }
+        {
+            try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
+            defer {
+                test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name) catch |err| {
+                    logger.warn("error {} deleting {s}", .{ err, llvm_ar_archive_name });
+                };
+            }
+            try testParsingOfLlvmGeneratedArchive(target, llvm_format, file_names, symbol_names, test_dir_info);
+            try testArchiveCreation(target, llvm_format, file_names, test_dir_info);
+        }
+    }
+}
+
+fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
-        logger.err("Failed {s} on format {}", .{ target.targetToArgument(), format });
+        logger.err("Failed creation {s} on format {}", .{ target.targetToArgument(), format });
+    }
+    const operation = "rc";
+    try doZarArchiveOperation(format, operation, file_names, test_dir_info);
+    var cancel_cleanup = false;
+    defer if (!cancel_cleanup) {
+        test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name) catch |err| {
+            logger.warn("error {} deleting {s}", .{ err, zig_ar_archive_name });
+        };
+    };
+    errdefer {
         cancel_cleanup = true;
     }
 
-    // Create an archive with llvm ar & zar and confirm that the outputs match
-    // byte-for-byte.
-    try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
-    try generateCompiledFilesWithSymbols(target, file_names, symbol_names, test_dir_info);
-
-    // TODO: the end-to-end test will interpret one of the files as
-    // mach-O for some reason! So explicitly disable symbols for now.
-    // (this needs fixing!)
-    const operation = "rc";
-    try doLlvmArchiveOperation(format, operation, file_names, test_dir_info);
-    try doZarArchiveOperation(format, operation, file_names, test_dir_info);
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: LlvmFormat, comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
-    var test_dir_info = try TestDirInfo.getInfo();
-    var cancel_cleanup = false;
-    defer if (!cancel_cleanup) test_dir_info.cleanup();
+fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: LlvmFormat, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
-        cancel_cleanup = true;
-        logger.err("Failed {s} on format {}", .{ target.targetToArgument(), format });
+        logger.err("Failed parsing {s} on format {}", .{ target.targetToArgument(), format });
     }
 
-    _ = test_dir_path;
-    try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
-    try generateCompiledFilesWithSymbols(target, file_names, symbol_names, test_dir_info);
-    try doLlvmArchiveOperation(format, "r", file_names, test_dir_info);
     try testArchiveParsing(target, test_dir_info, file_names, symbol_names);
 }
 
