@@ -128,11 +128,6 @@ test "Parse Archive 6" {
 
 test "Create Archive 6" {
     inline for (targets) |target| {
-        if(target.operating_system == .macos)
-        {
-            // TODO: Fix this!
-            continue;
-        }
         const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
         try testArchiveCreation(target, .implicit, no_dir, &test6_names, &test6_symbols);
         try testArchiveCreation(target, llvm_format, no_dir, &test6_names, &test6_symbols);

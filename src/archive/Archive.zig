@@ -368,10 +368,24 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
     // Symbol sorting function
+    // Sorted symbol tables sort by file first, and then by symbols
+    const SortContext = struct {
+        files: std.ArrayListUnmanaged(ArchivedFile),
+    };
     const SortFn = struct {
-        fn sorter(context: void, x: Symbol, y: Symbol) bool {
-            _ = context;
-            return std.mem.lessThan(u8, x.name, y.name);
+        fn sorter(context: *const SortContext, x: Symbol, y: Symbol) bool {
+            const x_file_name = context.files.items[x.file_index].name;
+            const y_file_name = context.files.items[y.file_index].name;
+            if (x_file_name.len < y_file_name.len) {
+                return true;
+            } else if (x_file_name.len > y_file_name.len) {
+                return false;
+            }
+            const order = std.mem.order(u8, x_file_name, y_file_name);
+            if (order == .eq) {
+                return std.mem.lessThan(u8, x.name, y.name);
+            }
+            return order == .lt;
         }
     };
 
@@ -381,8 +395,10 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         .set_true => true,
         .set_false => false,
     };
+
+    const sort_context: SortContext = .{ .files = self.files };
     if (sort_symbol_table) {
-        std.sort.sort(Symbol, self.symbols.items, {}, SortFn.sorter);
+        std.sort.sort(Symbol, self.symbols.items, &sort_context, SortFn.sorter);
     }
 
     // Calculate the offset of file independent of string table and symbol table itself.
