@@ -134,6 +134,29 @@ test "Create Archive 6" {
     }
 }
 
+const test_sort_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
+const test_sort = [_][]const []const u8{
+    &[_][]const u8{ "ddd", "aaa" },
+    &[_][]const u8{ "cccc", "ddd", "aaaa" },
+    &[_][]const u8{ "z", "aa", "a" },
+    &[_][]const u8{ "agsg", "ssss", "aaaa" },
+    &[_][]const u8{ "_1_2_3", "__1", "_00000" },
+    &[_][]const u8{ "AA", "aa", "BB" },
+    &[_][]const u8{ "aa", "AA", "BB" },
+    &[_][]const u8{ "BB", "AA", "aa" },
+    &[_][]const u8{ "_123", "_22", "_12" },
+    &[_][]const u8{ "bB", "aB", "cB" },
+    &[_][]const u8{ "_11", "_12", "_13" },
+};
+
+test "Create Archive Sorted" {
+    inline for (targets) |target| {
+        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
+        try testArchiveCreation(target, .implicit, no_dir, &test_sort_names, &test_sort);
+        try testArchiveCreation(target, llvm_format, no_dir, &test_sort_names, &test_sort);
+    }
+}
+
 fn createFileArray(comptime num_files: comptime_int) [num_files][]const u8 {
     comptime var aggregator: [num_files][]const u8 = undefined;
     for (aggregator) |_, index| {

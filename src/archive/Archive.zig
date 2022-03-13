@@ -367,8 +367,6 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
-    // Symbol sorting function
-    // Sorted symbol tables sort by file first, and then by symbols
     const SortContext = struct {
         files: std.ArrayListUnmanaged(ArchivedFile),
     };
@@ -376,9 +374,11 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         fn sorter(context: *const SortContext, x: Symbol, y: Symbol) bool {
             const x_file_name = context.files.items[x.file_index].name;
             const y_file_name = context.files.items[y.file_index].name;
-            if (x_file_name.len < y_file_name.len) {
+            // we only sort symbol names internally within file, but maintain
+            // the order within which they are added.
+            if (x.file_index < y.file_index) {
                 return true;
-            } else if (x_file_name.len > y_file_name.len) {
+            } else if (x.file_index > y.file_index) {
                 return false;
             }
             const order = std.mem.order(u8, x_file_name, y_file_name);
