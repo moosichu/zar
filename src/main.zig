@@ -246,6 +246,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
         }
     };
 
+    if (operation == .ranlib) {
+        // https://www.freebsd.org/cgi/man.cgi?query=ranlib&sektion=1&apropos=0&manpath=FreeBSD+13.0-RELEASE+and+Ports
+        logger.err("Operation {} still needs to be implemented!\n", .{operation});
+        return error.TODO;
+    }
+
     var modifiers: Archive.Modifiers = .{};
     if (operation_slice.len > 1) {
         const modifier_slice = operation_slice[1..];
@@ -260,7 +266,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
                 'S' => modifiers.build_symbol_table = false,
                 'r' => modifiers.sort_symbol_table = .set_true,
                 'R' => modifiers.sort_symbol_table = .set_false,
+                'a' => modifiers.move_setting = .before,
+                'b', 'i' => modifiers.move_setting = .after,
                 // TODO: should we print warning with unknown modifier?
+                // TODO: handle other modifiers!
                 else => {},
             }
         }
@@ -344,6 +353,15 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
                     try stdout.print("{s}\n", .{symbol.name});
                 }
             }
+        },
+        .move => {
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
+            defer file.close();
+
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            try archive.parse(allocator);
+            try archive.moveFiles(files);
+            try archive.finalize(allocator);
         },
         else => {
             logger.err("Operation {} still needs to be implemented!\n", .{operation});

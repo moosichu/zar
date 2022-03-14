@@ -181,6 +181,7 @@ pub const Header = extern struct {
 
 pub const ExplicitBooleanSetting = enum { ambiguous, set_true, set_false };
 
+pub const MoveSetting = enum { end, before, after };
 pub const Modifiers = struct {
     // Supress warning for file creation
     create: bool = false,
@@ -190,6 +191,7 @@ pub const Modifiers = struct {
     build_symbol_table: bool = true,
     sort_symbol_table: ExplicitBooleanSetting = .ambiguous,
     verbose: bool = false,
+    move_setting: MoveSetting = .end,
 };
 
 pub const Contents = struct {
@@ -229,6 +231,9 @@ pub const Symbol = struct {
 // the spec.
 const IntType = i32;
 
+// TODO: This name is confusing because ranlib is also the name of the ranlib
+// program - but also what this struct is traditionally called within archives.
+// :/
 // type of ranlib used depends on the archive storage format
 fn Ranlib(comptime storage: type) type {
     return extern struct {
@@ -670,6 +675,22 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
             }
         }
     }
+}
+
+pub fn moveFiles(self: *Archive, file_names: [][]const u8) !void {
+    switch (self.modifiers.move_setting) {
+        .end => {
+            // TODO: find files, move them, deal with all boundary cases!
+            _ = file_names;
+        },
+        .before, .after => {
+            // TODO: bounds check!
+            // const relpos = file_names[0];
+            // const other_files = file_names[1..file_names.len];
+        },
+    }
+    logger.err("Move operation still needs to be implemented!\n", .{});
+    return error.TODO;
 }
 
 pub fn extract(self: *Archive, file_names: [][]const u8) !void {
