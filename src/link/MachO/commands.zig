@@ -4,6 +4,7 @@ const io = std.io;
 const mem = std.mem;
 const meta = std.meta;
 const macho = std.macho;
+const os = std.os;
 const testing = std.testing;
 const assert = std.debug.assert;
 
@@ -222,8 +223,8 @@ pub const SegmentCommand = struct {
         vmsize: u64 = 0,
         fileoff: u64 = 0,
         filesize: u64 = 0,
-        maxprot: macho.vm_prot_t = macho.VM_PROT_NONE,
-        initprot: macho.vm_prot_t = macho.VM_PROT_NONE,
+        maxprot: macho.vm_prot_t = os.PROT.NONE,
+        initprot: macho.vm_prot_t = os.PROT.NONE,
         nsects: u32 = 0,
         flags: u32 = 0,
     };
@@ -488,8 +489,8 @@ test "read-write segment command" {
             .vmsize = 294912,
             .fileoff = 0,
             .filesize = 294912,
-            .maxprot = macho.VM_PROT_READ | macho.VM_PROT_WRITE | macho.VM_PROT_EXECUTE,
-            .initprot = macho.VM_PROT_EXECUTE | macho.VM_PROT_READ,
+            .maxprot = os.PROT.READ | os.PROT.WRITE | os.PROT.EXEC,
+            .initprot = os.PROT.EXEC | os.PROT.READ,
             .nsects = 1,
             .flags = 0,
         },
