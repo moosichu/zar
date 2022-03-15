@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const trace = @import("tracy.zig").trace;
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
@@ -143,6 +144,8 @@ pub fn main() anyerror!void {
 }
 
 pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void {
+    // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
+    // defer tracy_zone.end();
 
     // skip the executable name
     const stdout = io.getStdOut().writer();
