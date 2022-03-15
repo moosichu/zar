@@ -13,8 +13,11 @@ pub fn build(b: *std.build.Builder) void {
 
     const exe = b.addExecutable("zar", "src/main.zig");
 
+    var tests = b.addTest("src/test.zig");
+
     const exe_options = b.addOptions();
     exe.addOptions("build_options", exe_options);
+    tests.addOptions("build_options", exe_options);
 
     {
         const tracy = b.option([]const u8, "tracy", "Enable Tracy integration. Supply path to Tracy source");
@@ -24,6 +27,8 @@ pub fn build(b: *std.build.Builder) void {
         exe_options.addOption(bool, "enable_tracy", tracy != null);
         exe_options.addOption(bool, "enable_tracy_callstack", tracy_callstack);
         exe_options.addOption(bool, "enable_tracy_allocation", tracy_allocation);
+
+        // "-DTRACY_NO_EXIT=1"
 
         if (tracy) |tracy_path| {
             const client_cpp = std.fs.path.join(
@@ -42,9 +47,17 @@ pub fn build(b: *std.build.Builder) void {
             exe.linkLibC();
             exe.linkLibCpp();
 
+            tests.addIncludePath(tracy_path);
+            tests.addCSourceFile(client_cpp, tracy_c_flags);
+            tests.linkLibC();
+            tests.linkLibCpp();
+
             if (target.isWindows()) {
                 exe.linkSystemLibrary("dbghelp");
                 exe.linkSystemLibrary("ws2_32");
+
+                tests.linkSystemLibrary("dbghelp");
+                tests.linkSystemLibrary("ws2_32");
             }
         }
     }
@@ -62,7 +75,6 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    var tests = b.addTest("src/test.zig");
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&tests.step);
 }

@@ -4,6 +4,7 @@ const io = std.io;
 const mem = std.mem;
 const testing = std.testing;
 const logger = std.log.scoped(.tests);
+const trace = @import("tracy.zig").trace;
 
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
@@ -31,6 +32,10 @@ const no_dir = "test/data/none";
 // - Test bad inputs/
 // - Test performance
 // - Don't redo work between tests (compiling same files, running llvm ar multiple times).
+
+// Allows us to invoke zar as a program, just to really confirm it works
+// end-to-end.
+const invoke_zar_as_child_process = false;
 
 const test1_dir = "test/data/test1";
 const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
@@ -215,6 +220,8 @@ const TestDirInfo = struct {
 };
 
 pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const operation = "rc";
 
     inline for (targets) |target| {
@@ -256,6 +263,9 @@ pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: 
 }
 
 fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
+
     errdefer {
         logger.err("Failed creation {s} on format {}", .{ target.targetToArgument(), format });
     }
@@ -283,6 +293,8 @@ fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: L
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const allocator = std.testing.allocator;
     const llvm_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(llvm_ar_archive_name, .{});
     const zig_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(zig_ar_archive_name, .{});
@@ -314,6 +326,8 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
 }
 
 fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
 
     const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{});
@@ -370,6 +384,8 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
 }
 
 fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
@@ -384,25 +400,42 @@ fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime fi
 }
 
 fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const allocator = std.testing.allocator;
 
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
-    try argv.append("zar");
+    try argv.append("../../../zig-out/bin/zar");
     try argv.append(format.llvmFormatToArgument());
 
     try argv.append(operation);
     try argv.append(zig_ar_archive_name);
     try argv.appendSlice(file_names);
 
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
+    if (invoke_zar_as_child_process) {
+        const result = try std.ChildProcess.exec(.{
+            .allocator = allocator,
+            .argv = argv.items,
+            .cwd = test_dir_info.cwd,
+        });
 
-    try main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), argv.items);
+        defer {
+            allocator.free(result.stdout);
+            allocator.free(result.stderr);
+        }
+    } else {
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+
+        try main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), argv.items);
+    }
 }
 
 fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const allocator = std.testing.allocator;
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
@@ -428,6 +461,8 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
 }
 
 fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const []const u8, comptime symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const allocator = std.testing.allocator;
 
     for (symbol_names) |file_symbols, index| {

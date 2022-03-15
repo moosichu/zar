@@ -123,6 +123,9 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
 }
 
 pub fn main() anyerror!void {
+    const tracy = trace(@src());
+    defer tracy.end();
+
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -130,7 +133,8 @@ pub fn main() anyerror!void {
     const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
         return err;
     } else {
-        logger.err("Unknown error occured.");
+        logger.err("Unknown error occured.", .{});
+        return;
     };
 
     const cwd = fs.cwd();
@@ -138,7 +142,7 @@ pub fn main() anyerror!void {
         handleArchiveError(err) catch |e| if (debug_errors) {
             return e;
         } else {
-            logger.err("Unknown error occured.", {});
+            logger.err("Unknown error occured.", .{});
         };
     };
 }

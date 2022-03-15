@@ -2,6 +2,7 @@ const Archive = @This();
 
 const builtin = @import("builtin");
 const std = @import("std");
+const trace = @import("../tracy.zig").trace;
 const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
@@ -317,6 +318,8 @@ pub fn buildSymbolTable(
     self: *Archive,
     allocator: Allocator,
 ) !SymbolStringTableAndOffsets {
+    const tracy = trace(@src());
+    defer tracy.end();
     var symbol_table_size: usize = 0;
     const symbol_offsets = try allocator.alloc(i32, self.symbols.items.len);
     errdefer allocator.free(symbol_offsets);
@@ -358,6 +361,8 @@ pub fn buildSymbolTable(
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn finalize(self: *Archive, allocator: Allocator) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     if (self.output_archive_type == .ambiguous) {
         // if output archive type is still ambiguous (none was inferred, and
         // none was set) then we need to infer it from the host platform!
@@ -646,6 +651,8 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 }
 
 pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     // For the list of given file names, find the entry in self.files
     // and remove it from self.files.
     for (file_names) |file_name| {
@@ -713,6 +720,8 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
 }
 
 pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u8) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
     for (file_names) |file_name| {
         // Open the file and read all of its contents
         const file = try self.dir.openFile(file_name, .{ .mode = .read_only });
@@ -898,6 +907,8 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
 }
 
 pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || CriticalError)!void {
+    const tracy = trace(@src());
+    defer tracy.end();
     const reader = self.file.reader();
     {
         // Is the magic header found at the start of the archive?
