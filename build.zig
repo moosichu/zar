@@ -58,6 +58,9 @@ pub fn build(b: *std.build.Builder) void {
 
                 tests.linkSystemLibrary("dbghelp");
                 tests.linkSystemLibrary("ws2_32");
+            } else if (target.isDarwin()) {
+                exe.linkFramework("CoreFoundation");
+                tests.linkFramework("CoreFoundation");
             }
         }
     }
