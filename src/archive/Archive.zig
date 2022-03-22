@@ -3,6 +3,7 @@ const Archive = @This();
 const builtin = @import("builtin");
 const std = @import("std");
 const trace = @import("../tracy.zig").trace;
+const traceNamed = @import("../tracy.zig").traceNamed;
 const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
@@ -408,6 +409,8 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
     const sort_context: SortContext = .{ .files = self.files };
     if (sort_symbol_table) {
+        const tracy_scope = traceNamed(@src(), "Sort Symbol Table");
+        defer tracy_scope.end();
         std.sort.sort(Symbol, self.symbols.items, &sort_context, SortFn.sorter);
     }
 
@@ -468,6 +471,8 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
             // Write the symbol table itself
             if (self.modifiers.build_symbol_table and self.symbols.items.len != 0) {
+                const tracy_scope = traceNamed(@src(), "Write Symbol Table");
+                defer tracy_scope.end();
                 const symbol_string_table_and_offsets = try self.buildSymbolTable(allocator);
                 defer symbol_string_table_and_offsets.deinit(allocator);
 
@@ -485,10 +490,14 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
                 try writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size });
 
-                if (format == .gnu64) {
-                    try writer.writeIntBig(u64, @intCast(u64, self.symbols.items.len));
-                } else {
-                    try writer.writeIntBig(u32, @intCast(u32, self.symbols.items.len));
+                {
+                    const tracy_scope_inner = traceNamed(@src(), "Write Symbol Count");
+                    defer tracy_scope_inner.end();
+                    if (format == .gnu64) {
+                        try writer.writeIntBig(u64, @intCast(u64, self.symbols.items.len));
+                    } else {
+                        try writer.writeIntBig(u32, @intCast(u32, self.symbols.items.len));
+                    }
                 }
 
                 // magic_string.len == magic_thin.len, so its not a problem
@@ -511,11 +520,16 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
                     offset_to_files += 1;
                 }
 
-                for (self.symbols.items) |symbol| {
-                    if (format == .gnu64) {
-                        try writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @intCast(i64, offset_to_files));
-                    } else {
-                        try writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files));
+                {
+                    const tracy_scope_inner = traceNamed(@src(), "Write Symbol File Offsets");
+                    defer tracy_scope_inner.end();
+
+                    for (self.symbols.items) |symbol| {
+                        if (format == .gnu64) {
+                            try writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @intCast(i64, offset_to_files));
+                        } else {
+                            try writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files));
+                        }
                     }
                 }
 
@@ -524,6 +538,8 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
 
             // Write the string table itself
             {
+                const tracy_scope = traceNamed(@src(), "Write String Table");
+                defer tracy_scope.end();
                 if (string_table.items.len != 0) {
                     while (string_table.items.len % self.output_archive_type.getAlignment() != 0)
                         try string_table.append('\n');
@@ -538,6 +554,8 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
             const write_symbol_table =
                 self.modifiers.build_symbol_table and (self.symbols.items.len != 0 or self.output_archive_type != .bsd);
             if (write_symbol_table) {
+                const tracy_scope = traceNamed(@src(), "Write Symbol Table");
+                defer tracy_scope.end();
                 const symbol_string_table_and_offsets = try self.buildSymbolTable(allocator);
                 defer symbol_string_table_and_offsets.deinit(allocator);
 
@@ -598,6 +616,9 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     }
 
     // Write the files
+
+    const tracy_scope = traceNamed(@src(), "Write Files To Archive");
+    defer tracy_scope.end();
     for (self.files.items) |file, index| {
         var header_buffer: [@sizeOf(Header)]u8 = undefined;
 
