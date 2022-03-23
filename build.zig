@@ -12,12 +12,15 @@ pub fn build(b: *std.build.Builder) void {
     const mode = b.standardReleaseOptions();
 
     const exe = b.addExecutable("zar", "src/main.zig");
-
     var tests = b.addTest("src/test.zig");
+    var tests_exe = b.addTestExe("test", "src/test.zig");
+
+    const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 
     const exe_options = b.addOptions();
     exe.addOptions("build_options", exe_options);
     tests.addOptions("build_options", exe_options);
+    tests_exe.addOptions("build_options", exe_options);
 
     {
         const tracy = b.option([]const u8, "tracy", "Enable Tracy integration. Supply path to Tracy source");
@@ -78,6 +81,12 @@ pub fn build(b: *std.build.Builder) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&tests.step);
+    if (build_test_executable_only) {
+        const test_step = b.step("test", "Run tests");
+        test_step.dependOn(&tests_exe.step);
+        tests_exe.emit_bin = .{ .emit_to = "zig-out/bin/test" };
+    } else {
+        const test_step = b.step("test", "Run tests");
+        test_step.dependOn(&tests.step);
+    }
 }
