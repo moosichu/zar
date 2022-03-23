@@ -105,9 +105,11 @@ fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const
     return true;
 }
 
-fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool) !fs.File {
+fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool, created: *bool) !fs.File {
+    created.* = false;
     const open_file_handle = cwd.openFile(archive_path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => {
+            created.* = true;
             if (print_creation_warning) {
                 logger.warn("Creating new archive as none exists at path provided\n", .{});
             }
@@ -306,19 +308,21 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
 
     switch (operation) {
         .insert => {
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
+            var created = false;
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
             try archive.insertFiles(allocator, files);
             try archive.finalize(allocator);
         },
         .delete => {
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
+            var created = false;
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
             try archive.deleteFiles(files);
             try archive.finalize(allocator);
@@ -327,7 +331,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
                 try stdout.print("{s}\n", .{parsed_file.name});
@@ -337,7 +341,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
                 try parsed_file.contents.write(stdout, stderr);
@@ -347,7 +351,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
             try archive.parse(allocator);
             for (archive.symbols.items) |symbol| {
                 if (modifiers.verbose) {
@@ -362,10 +366,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void
             }
         },
         .move => {
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create);
+            var created = false;
+            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers);
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
             try archive.moveFiles(files);
             try archive.finalize(allocator);

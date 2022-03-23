@@ -21,6 +21,7 @@ const Allocator = std.mem.Allocator;
 dir: fs.Dir,
 file: fs.File,
 name: []const u8,
+created: bool,
 
 // We need to differentiate between inferred and output archive type, as other ar
 // programs "just handle" any valid archive for parsing, regarldess of what a
@@ -289,6 +290,7 @@ pub fn create(
     name: []const u8,
     output_archive_type: ArchiveType,
     modifiers: Modifiers,
+    created: bool,
 ) !Archive {
     return Archive{
         .dir = dir,
@@ -301,6 +303,7 @@ pub fn create(
         .file_name_to_index = .{},
         .modifiers = modifiers,
         .stat = try file.stat(),
+        .created = created,
     };
 }
 
@@ -745,7 +748,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
     defer tracy.end();
     for (file_names) |file_name| {
         // Open the file and read all of its contents
-        const file = try self.dir.openFile(file_name, .{ .mode = .read_only });
+        const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_only }));
         defer file.close();
 
         // We only need to do this because file stats don't include
@@ -783,7 +786,8 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u
 
         if (self.modifiers.update_only) {
             // TODO: Write a test that checks for this functionality still working!
-            if (self.stat.mtime >= mtime) {
+            // TODO: Is this even correct? Shouldn't it be comparing to mtime in archive already?
+            if (self.stat.mtime >= mtime and !self.created) {
                 continue;
             }
         }
@@ -1445,7 +1449,7 @@ pub const MRIParser = struct {
                             .clear => {
                                 // This is a bit of a hack but its reliable.
                                 // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
-                                const file = try self.dir.openFile(self.file_name.?, .{ .mode = .read_write });
+                                const file = try handleFileIoError(.opening, self.file_name, self.dir.openFile(self.file_name.?, .{ .mode = .read_write }));
                                 self.archive = Archive.create(file, self.file_name.?);
 
                                 try self.archive.?.parse(allocator, stderr);
@@ -1464,7 +1468,7 @@ pub const MRIParser = struct {
                             .open => {
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try self.dir.openFile(file_name, .{ .mode = .read_write });
+                                const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_write }));
                                 self.archive = Archive.create(file, file_name);
                                 self.file_name = file_name;
 
