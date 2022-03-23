@@ -241,23 +241,15 @@ pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: 
 
         {
             try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
-            defer {
-                test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name) catch |err| {
-                    logger.warn("error {} deleting {s}", .{ err, llvm_ar_archive_name });
-                };
-            }
             try testParsingOfLlvmGeneratedArchive(target, .implicit, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, .implicit, file_names, test_dir_info);
+            try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
         {
             try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
-            defer {
-                test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name) catch |err| {
-                    logger.warn("error {} deleting {s}", .{ err, llvm_ar_archive_name });
-                };
-            }
             try testParsingOfLlvmGeneratedArchive(target, llvm_format, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, llvm_format, file_names, test_dir_info);
+            try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
     }
 }
