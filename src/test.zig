@@ -330,7 +330,7 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
 
     var allocator = arena.allocator();
 
-    var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{});
+    var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
     try archive.parse(allocator);
 
     var memory_buffer = try allocator.alloc(u8, 1024 * 1024);
