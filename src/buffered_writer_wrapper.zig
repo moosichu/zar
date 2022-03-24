@@ -12,10 +12,13 @@ pub fn BufferedWriterWrapper(
     return struct {
         pub const Error = BufferedWriter.Error;
         buffered_writer: *BufferedWriter,
+        file_pos: *usize,
         const Self = @This();
 
         pub fn write(self: Self, bytes: []const u8) BufferedWriter.Error!usize {
-            return self.buffered_writer.write(bytes);
+            const file_pos_change = try self.buffered_writer.write(bytes);
+            self.file_pos.* += file_pos_change;
+            return file_pos_change;
         }
     };
 }

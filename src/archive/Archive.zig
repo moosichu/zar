@@ -15,6 +15,7 @@ const macho = std.macho;
 const Coff = @import("../link/Coff/Object.zig");
 const Bitcode = @import("../link/Bitcode/Object.zig");
 const coff = std.coff;
+const BufferedWriterWrapper = @import("../buffered_writer_wrapper.zig").BufferedWriterWrapper;
 
 const Allocator = std.mem.Allocator;
 
@@ -361,6 +362,15 @@ pub fn buildSymbolTable(
     return result;
 }
 
+fn calculatePadding(self: *Archive, file_pos: usize) usize {
+    var padding = file_pos % self.output_archive_type.getAlignment();
+    padding = (self.output_archive_type.getAlignment() - padding) % self.output_archive_type.getAlignment();
+    return padding;
+}
+
+const ConcreteBufferedWriter = BufferedWriterWrapper(std.io.BufferedWriter(4096, std.fs.File.Writer));
+const BufferedWriter = std.io.Writer(ConcreteBufferedWriter, ConcreteBufferedWriter.Error, ConcreteBufferedWriter.write);
+
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
@@ -376,7 +386,12 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
-    const writer = self.file.writer();
+    // We wrap the buffered writer so that can we can have a mutable reference to it, so the wrapper itself can
+    // be wrapped by std.io.Writer & provide all the functionality we need through its const interface.
+    var buffered_writer = std.io.bufferedWriter(self.file.writer());
+    var file_pos: usize = 0;
+    const writer: BufferedWriter = .{ .context = ConcreteBufferedWriter{ .buffered_writer = &buffered_writer, .file_pos = &file_pos } };
+
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
@@ -629,9 +644,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
             if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
-                const file_pos = try self.file.getPos();
-                var padding = (file_pos + header_buffer.len + file.name.len) % self.output_archive_type.getAlignment();
-                padding = (self.output_archive_type.getAlignment() - padding) % self.output_archive_type.getAlignment();
+                const padding = self.calculatePadding(file_pos + header_buffer.len + file.name.len);
 
                 // BSD format: Just write the length of the name in header
                 _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding});
@@ -657,21 +670,19 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try writer.writeAll(file.name);
-
-            while ((try self.file.getPos()) % self.output_archive_type.getAlignment() != 0)
-                try writer.writeByte(0);
+            try writer.writeByteNTimes(0, self.calculatePadding(file_pos));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
-
-            while ((try self.file.getPos()) % self.output_archive_type.getFileAlignment() != 0)
-                try writer.writeByte('\n');
+            try writer.writeByteNTimes('\n', self.calculatePadding(file_pos));
         }
     }
 
+    try buffered_writer.flush();
+
     // Truncate the file size
-    try self.file.setEndPos(try self.file.getPos());
+    try self.file.setEndPos(file_pos);
 }
 
 pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
