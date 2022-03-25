@@ -100,6 +100,7 @@ const DebugInfo = struct {
             .debug_str = debug_str,
             .debug_line = debug_line,
             .debug_ranges = debug_ranges,
+            .debug_line_str = null,
         };
         try dwarf.openDwarfDebugInfo(&inner, allocator);
 
