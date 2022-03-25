@@ -15,7 +15,7 @@ const macho = std.macho;
 const Coff = @import("../link/Coff/Object.zig");
 const Bitcode = @import("../link/Bitcode/Object.zig");
 const coff = std.coff;
-const BufferedWriterWrapper = @import("../buffered_writer_wrapper.zig").BufferedWriterWrapper;
+const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -368,8 +368,7 @@ fn calculatePadding(self: *Archive, file_pos: usize) usize {
     return padding;
 }
 
-const ConcreteBufferedWriter = BufferedWriterWrapper(std.io.BufferedWriter(4096, std.fs.File.Writer));
-const BufferedWriter = std.io.Writer(ConcreteBufferedWriter, ConcreteBufferedWriter.Error, ConcreteBufferedWriter.write);
+const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(std.io.BufferedWriter(4096, std.fs.File.Writer));
 
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
@@ -386,11 +385,9 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     // Overwrite all contents
     try self.file.seekTo(0);
 
-    // We wrap the buffered writer so that can we can have a mutable reference to it, so the wrapper itself can
-    // be wrapped by std.io.Writer & provide all the functionality we need through its const interface.
-    var buffered_writer = std.io.bufferedWriter(self.file.writer());
-    var file_pos: usize = 0;
-    const writer: BufferedWriter = .{ .context = ConcreteBufferedWriter{ .buffered_writer = &buffered_writer, .file_pos = &file_pos } };
+    // We wrap the buffered writer so that can we can track file position more easily
+    var buffered_writer = TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
+    const writer = buffered_writer.writer();
 
     try writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
@@ -644,7 +641,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
             if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
-                const padding = self.calculatePadding(file_pos + header_buffer.len + file.name.len);
+                const padding = self.calculatePadding(buffered_writer.file_pos + header_buffer.len + file.name.len);
 
                 // BSD format: Just write the length of the name in header
                 _ = try std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding});
@@ -670,19 +667,19 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try writer.writeAll(file.name);
-            try writer.writeByteNTimes(0, self.calculatePadding(file_pos));
+            try writer.writeByteNTimes(0, self.calculatePadding(buffered_writer.file_pos));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try file.contents.write(writer, null);
-            try writer.writeByteNTimes('\n', self.calculatePadding(file_pos));
+            try writer.writeByteNTimes('\n', self.calculatePadding(buffered_writer.file_pos));
         }
     }
 
     try buffered_writer.flush();
 
     // Truncate the file size
-    try self.file.setEndPos(file_pos);
+    try self.file.setEndPos(buffered_writer.file_pos);
 }
 
 pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
