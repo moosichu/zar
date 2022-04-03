@@ -5,6 +5,7 @@ const mem = std.mem;
 const testing = std.testing;
 const logger = std.log.scoped(.tests);
 const trace = @import("tracy.zig").trace;
+const Allocator = std.mem.Allocator;
 
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
@@ -37,94 +38,85 @@ const no_dir = "test/data/none";
 // end-to-end.
 const invoke_zar_as_child_process = false;
 
-const test1_dir = "test/data/test1";
-const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
-const test1_symbols = no_symbols;
-
-test "Test Archive 1" {
+test "Test Archive Text Basic" {
+    const test1_dir = "test/data/test1";
+    const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
+    const test1_symbols = no_symbols;
     try doStandardTests(test1_dir, &test1_names, &test1_symbols);
 }
 
-const test2_dir = "test/data/test2";
-const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
-const test2_symbols = no_symbols;
-
-test "Test Archive 2" {
+test "Test Archive Text With Long Filenames" {
+    // Due to the fixed-size limits for filenames in the standard ar format,
+    // this tests that the different ar-type specific extensions for dealing
+    // with that properly work.
+    const test2_dir = "test/data/test2";
+    const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
+    const test2_symbols = no_symbols;
     try doStandardTests(test2_dir, &test2_names, &test2_symbols);
 }
 
-const test4_names = [_][]const u8{"input1.o"};
-const test4_symbols = [_][]const []const u8{
-    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
-};
-
-test "Test Archive 4" {
+test "Test Archive With Symbols Basic" {
+    const test4_names = [_][]const u8{"input1.o"};
+    const test4_symbols = [_][]const []const u8{
+        &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+    };
     try doStandardTests(no_dir, &test4_names, &test4_symbols);
 }
 
-const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
-const test5_symbols = [_][]const []const u8{
-    &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
-    &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
-    &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
-};
-
-test "Test Archive 5" {
+test "Test Archive With Long Names And Symbols" {
+    const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
+    const test5_symbols = [_][]const []const u8{
+        &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
+        &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
+        &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
+    };
     try doStandardTests(no_dir, &test5_names, &test5_symbols);
 }
 
-const test6_filecount = 55;
-const test6_symcount = 15;
-
-const test6_names = createFileArray(test6_filecount);
-const test6_symbols = createSymbolArray(&test6_names, test6_symcount);
-
-test "Test Archive 6" {
+test "Test Archive Stress Test" {
+    // Generate 55 different files with an arbitrary number of symbols
+    const test6_filecount = 55;
+    const test6_symcount = 15;
+    var test6_names: [test6_filecount][]u8 = undefined;
+    var test6_symbols: [test6_filecount][][]u8 = undefined;
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try initialiseTestData(arena.allocator(), &test6_names, &test6_symbols, test6_symcount);
     try doStandardTests(no_dir, &test6_names, &test6_symbols);
 }
 
-const test_sort_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
-const test_sort = [_][]const []const u8{
-    &[_][]const u8{ "ddd", "aaa" },
-    &[_][]const u8{ "cccc", "ddd", "aaaa" },
-    &[_][]const u8{ "z", "aa", "a" },
-    &[_][]const u8{ "agsg", "ssss", "aaaa" },
-    &[_][]const u8{ "_1_2_3", "__1", "_00000" },
-    &[_][]const u8{ "AA", "aa", "BB" },
-    &[_][]const u8{ "aa", "AA", "BB" },
-    &[_][]const u8{ "BB", "AA", "aa" },
-    &[_][]const u8{ "_123", "_22", "_12" },
-    &[_][]const u8{ "bB", "aB", "cB" },
-    &[_][]const u8{ "_11", "_12", "_13" },
-};
-
 test "Test Archive Sorted" {
+    // Confirm that our archives default files & their symbols in the correct way
+    // for each target.
+    const test_sort_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
+    const test_sort = [_][]const []const u8{
+        &[_][]const u8{ "ddd", "aaa" },
+        &[_][]const u8{ "cccc", "ddd", "aaaa" },
+        &[_][]const u8{ "z", "aa", "a" },
+        &[_][]const u8{ "agsg", "ssss", "aaaa" },
+        &[_][]const u8{ "_1_2_3", "__1", "_00000" },
+        &[_][]const u8{ "AA", "aa", "BB" },
+        &[_][]const u8{ "aa", "AA", "BB" },
+        &[_][]const u8{ "BB", "AA", "aa" },
+        &[_][]const u8{ "_123", "_22", "_12" },
+        &[_][]const u8{ "bB", "aB", "cB" },
+        &[_][]const u8{ "_11", "_12", "_13" },
+    };
     // TODO: remove redundancy maybe by excluding parsing component of this test?
     try doStandardTests(no_dir, &test_sort_names, &test_sort);
 }
 
-fn createFileArray(comptime num_files: comptime_int) [num_files][]const u8 {
-    comptime var aggregator: [num_files][]const u8 = undefined;
-    for (aggregator) |_, index| {
-        aggregator[index] = std.fmt.comptimePrint("index_{}.o", .{index});
+fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
+    for (file_names) |_, index| {
+        file_names[index] = try std.fmt.allocPrint(allocator, "index_{}.o", .{index});
     }
-    return aggregator;
-}
-
-fn createInFileSymbolArray(comptime file_index: comptime_int, comptime num_symbols: comptime_int) [num_symbols][]const u8 {
-    comptime var aggregator: [num_symbols][]const u8 = undefined;
-    for (aggregator) |_, index| {
-        aggregator[index] = std.fmt.comptimePrint("symbol_{}_file_{}", .{ index, file_index });
+    for (symbol_names) |_, file_index| {
+        symbol_names[file_index] = try allocator.alloc([]u8, symbol_count);
+        for (symbol_names[file_index]) |_, symbol_index| {
+            symbol_names[file_index][symbol_index] = try std.fmt.allocPrint(allocator, "symbol_{}_file_{}", .{ symbol_index, file_index });
+        }
     }
-    return aggregator;
-}
-
-fn createSymbolArray(comptime file_names: []const []const u8, comptime num_symbols: comptime_int) [file_names.len][]const []const u8 {
-    comptime var aggregator: [file_names.len][]const []const u8 = undefined;
-    for (aggregator) |_, file_index| {
-        aggregator[file_index] = &createInFileSymbolArray(file_index, num_symbols);
-    }
-    return aggregator;
+    return;
 }
 
 const targets = result: {
@@ -219,7 +211,7 @@ const TestDirInfo = struct {
     }
 };
 
-pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+pub fn doStandardTests(comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const operation = "rc";
@@ -254,7 +246,7 @@ pub fn doStandardTests(comptime test_dir_path: []const u8, comptime file_names: 
     }
 }
 
-fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -276,7 +268,7 @@ fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, com
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: LlvmFormat, comptime file_names: []const []const u8, comptime symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
         logger.err("Failed parsing {s} on format {}", .{ target.targetToArgument(), format });
     }
@@ -317,7 +309,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, comptime symbol_names: []const []const []const u8) !void {
+fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
@@ -375,7 +367,7 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
     }
 }
 
-fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
@@ -391,7 +383,7 @@ fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, comptime fi
     }
 }
 
-fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
@@ -425,7 +417,7 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     }
 }
 
-fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, comptime file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
@@ -452,7 +444,7 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
     }
 }
 
-fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const []const u8, comptime symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
