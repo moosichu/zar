@@ -2413,8 +2413,8 @@ fn populateMetadata(self: *MachO) !void {
         try self.load_commands.append(self.base.allocator, .{
             .Segment = SegmentCommand.empty("__TEXT", .{
                 .vmaddr = 0x100000000, // always starts at 4GB
-                .maxprot = macho.VM_PROT_READ | macho.VM_PROT_EXECUTE,
-                .initprot = macho.VM_PROT_READ | macho.VM_PROT_EXECUTE,
+                .maxprot = macho.PROT.READ | macho.PROT.EXECUTE,
+                .initprot = macho.PROT.READ | macho.PROT.EXECUTE,
             }),
         });
     }
@@ -2483,8 +2483,8 @@ fn populateMetadata(self: *MachO) !void {
         self.data_const_segment_cmd_index = @intCast(u16, self.load_commands.items.len);
         try self.load_commands.append(self.base.allocator, .{
             .Segment = SegmentCommand.empty("__DATA_CONST", .{
-                .maxprot = macho.VM_PROT_READ | macho.VM_PROT_WRITE,
-                .initprot = macho.VM_PROT_READ | macho.VM_PROT_WRITE,
+                .maxprot = macho.PROT.READ | macho.PROT.WRITE,
+                .initprot = macho.PROT.READ | macho.PROT.WRITE,
             }),
         });
     }
@@ -2506,8 +2506,8 @@ fn populateMetadata(self: *MachO) !void {
         self.data_segment_cmd_index = @intCast(u16, self.load_commands.items.len);
         try self.load_commands.append(self.base.allocator, .{
             .Segment = SegmentCommand.empty("__DATA", .{
-                .maxprot = macho.VM_PROT_READ | macho.VM_PROT_WRITE,
-                .initprot = macho.VM_PROT_READ | macho.VM_PROT_WRITE,
+                .maxprot = macho.PROT.READ | macho.PROT.WRITE,
+                .initprot = macho.PROT.READ | macho.PROT.WRITE,
             }),
         });
     }
@@ -2541,8 +2541,8 @@ fn populateMetadata(self: *MachO) !void {
         self.linkedit_segment_cmd_index = @intCast(u16, self.load_commands.items.len);
         try self.load_commands.append(self.base.allocator, .{
             .Segment = SegmentCommand.empty("__LINKEDIT", .{
-                .maxprot = macho.VM_PROT_READ,
-                .initprot = macho.VM_PROT_READ,
+                .maxprot = macho.PROT.READ,
+                .initprot = macho.PROT.READ,
             }),
         });
     }
