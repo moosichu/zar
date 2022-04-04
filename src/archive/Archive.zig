@@ -682,7 +682,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) !void {
     try self.file.setEndPos(buffered_writer.file_pos);
 }
 
-pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
+pub fn deleteFiles(self: *Archive, file_names: []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     // For the list of given file names, find the entry in self.files
@@ -716,7 +716,7 @@ pub fn deleteFiles(self: *Archive, file_names: [][]const u8) !void {
     }
 }
 
-pub fn moveFiles(self: *Archive, file_names: [][]const u8) !void {
+pub fn moveFiles(self: *Archive, file_names: []const []const u8) !void {
     switch (self.modifiers.move_setting) {
         .end => {
             // TODO: find files, move them, deal with all boundary cases!
@@ -732,7 +732,7 @@ pub fn moveFiles(self: *Archive, file_names: [][]const u8) !void {
     return error.TODO;
 }
 
-pub fn extract(self: *Archive, file_names: [][]const u8) !void {
+pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     if (self.inferred_archive_type == .gnuthin) {
         // TODO: better error
         return error.ExtractingFromThin;
@@ -751,7 +751,7 @@ pub fn extract(self: *Archive, file_names: [][]const u8) !void {
     }
 }
 
-pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: [][]const u8) !void {
+pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     for (file_names) |file_name| {
@@ -1406,8 +1406,10 @@ pub const MRIParser = struct {
     }
 
     // Returns a slice of tokens
-    fn getTokenLine(allocator: Allocator, iter: *mem.SplitIterator(u8)) ![][]const u8 {
+    fn getTokenLine(allocator: Allocator, iter: *mem.SplitIterator(u8)) ![]const []const u8 {
         var list = std.ArrayList([]const u8).init(allocator);
+        errdefer list.deinit();
+
         while (getToken(iter)) |tok| {
             try list.append(tok);
         }

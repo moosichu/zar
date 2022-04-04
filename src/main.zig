@@ -97,7 +97,7 @@ fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
     logger.err(overview ++ "\nShowing help text above as error occured:\n" ++ errorString, args);
 }
 
-fn checkArgsBounds(args: anytype, index: u32, comptime missing_argument: []const u8) bool {
+fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8) bool {
     if (index >= args.len) {
         printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
         return false;
@@ -149,7 +149,7 @@ pub fn main() anyerror!void {
     };
 }
 
-pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: anytype) anyerror!void {
+pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) anyerror!void {
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
 
