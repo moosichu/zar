@@ -479,6 +479,7 @@ fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const
         // TODO: Test other target triples with appropriate corresponding archive format!
         try argv.append(target.targetToArgument());
 
+        // TODO: Do this in non-blocking way and spawn process  per-thread!
         const result = try std.ChildProcess.exec(.{
             .allocator = allocator,
             .argv = argv.items,
