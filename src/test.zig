@@ -372,7 +372,7 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
 fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
-    const test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
+    var test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
