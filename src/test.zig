@@ -280,8 +280,10 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
-    const llvm_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(llvm_ar_archive_name, .{});
-    const zig_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(zig_ar_archive_name, .{});
+    const llvm_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only });
+    defer llvm_ar_file_handle.close();
+    const zig_ar_file_handle = try test_dir_info.tmp_dir.dir.openFile(zig_ar_archive_name, .{ .mode = .read_only });
+    defer zig_ar_file_handle.close();
 
     const llvm_ar_stat = try llvm_ar_file_handle.stat();
     const zig_ar_stat = try zig_ar_file_handle.stat();
@@ -314,7 +316,7 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
 
-    const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{});
+    const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only });
     defer archive_file.close();
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -374,6 +376,7 @@ fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, file_names:
         error.FileNotFound => return,
         else => return err,
     };
+    defer test_src_dir.close();
 
     for (file_names) |test_file| {
         std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{}) catch |err| switch (err) {
