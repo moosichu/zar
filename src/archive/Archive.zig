@@ -837,7 +837,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
                 // {
 
                 // }
-                if (mem.eql(u8, magic[0..Elf.magic.len], Elf.magic)) {
+                if (mem.eql(u8, magic[0..elf.MAGIC.len], elf.MAGIC)) {
                     if (self.output_archive_type == .ambiguous) {
                         // TODO: double check that this is the correct inference
                         self.output_archive_type = .gnu;
