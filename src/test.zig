@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
@@ -42,7 +43,9 @@ test "Test Archive Text Basic" {
     const test1_dir = "test/data/test1";
     const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
     const test1_symbols = no_symbols;
-    try doStandardTests(test1_dir, &test1_names, &test1_symbols);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols);
 }
 
 test "Test Archive Text With Long Filenames" {
@@ -52,7 +55,9 @@ test "Test Archive Text With Long Filenames" {
     const test2_dir = "test/data/test2";
     const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
     const test2_symbols = no_symbols;
-    try doStandardTests(test2_dir, &test2_names, &test2_symbols);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), test2_dir, &test2_names, &test2_symbols);
 }
 
 test "Test Archive With Symbols Basic" {
@@ -60,7 +65,9 @@ test "Test Archive With Symbols Basic" {
     const test4_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
     };
-    try doStandardTests(no_dir, &test4_names, &test4_symbols);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), no_dir, &test4_names, &test4_symbols);
 }
 
 test "Test Archive With Long Names And Symbols" {
@@ -70,7 +77,9 @@ test "Test Archive With Long Names And Symbols" {
         &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
         &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
     };
-    try doStandardTests(no_dir, &test5_names, &test5_symbols);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), no_dir, &test5_names, &test5_symbols);
 }
 
 test "Test Archive Stress Test" {
@@ -79,10 +88,10 @@ test "Test Archive Stress Test" {
     const test6_symcount = 15;
     var test6_names: [test6_filecount][]u8 = undefined;
     var test6_symbols: [test6_filecount][][]u8 = undefined;
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     try initialiseTestData(arena.allocator(), &test6_names, &test6_symbols, test6_symcount);
-    try doStandardTests(no_dir, &test6_names, &test6_symbols);
+    try doStandardTests(arena.allocator(), no_dir, &test6_names, &test6_symbols);
 }
 
 test "Test Archive Sorted" {
@@ -103,7 +112,9 @@ test "Test Archive Sorted" {
         &[_][]const u8{ "_11", "_12", "_13" },
     };
     // TODO: remove redundancy maybe by excluding parsing component of this test?
-    try doStandardTests(no_dir, &test_sort_names, &test_sort);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), no_dir, &test_sort_names, &test_sort);
 }
 
 fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
@@ -211,7 +222,7 @@ const TestDirInfo = struct {
     }
 };
 
-pub fn doStandardTests(comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
+pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const operation = "rc";
@@ -229,17 +240,17 @@ pub fn doStandardTests(comptime test_dir_path: []const u8, file_names: []const [
         // byte-for-byte.
         try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
         const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
-        try generateCompiledFilesWithSymbols(target, file_names, symbol_names, test_dir_info);
+        try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
 
         {
             try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(target, .implicit, file_names, symbol_names, test_dir_info);
+            try testParsingOfLlvmGeneratedArchive(framework_allocator, target, .implicit, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, .implicit, file_names, test_dir_info);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
         {
             try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(target, llvm_format, file_names, symbol_names, test_dir_info);
+            try testParsingOfLlvmGeneratedArchive(framework_allocator, target, llvm_format, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, llvm_format, file_names, test_dir_info);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
@@ -268,12 +279,12 @@ fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, fil
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testParsingOfLlvmGeneratedArchive(framework_allocator: Allocator, comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
         logger.err("Failed parsing {s} on format {}", .{ target.targetToArgument(), format });
     }
 
-    try testArchiveParsing(target, test_dir_info, file_names, symbol_names);
+    try testArchiveParsing(framework_allocator, target, test_dir_info, file_names, symbol_names);
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
@@ -311,7 +322,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
+fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
@@ -322,12 +333,13 @@ fn testArchiveParsing(comptime target: Target, test_dir_info: TestDirInfo, file_
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var allocator = arena.allocator();
+    var testing_allocator = arena.allocator();
 
     var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
-    try archive.parse(allocator);
+    try archive.parse(testing_allocator);
 
-    var memory_buffer = try allocator.alloc(u8, 1024 * 1024);
+    var memory_buffer = try framework_allocator.alloc(u8, 1024 * 1024);
+    defer framework_allocator.free(memory_buffer);
     for (file_names) |file_name, index| {
         try testing.expect(mem.eql(u8, archive.files.items[index].name, file_name));
         const file = try test_dir.openFile(file_name, .{});
@@ -413,6 +425,8 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
             allocator.free(result.stderr);
         }
     } else {
+        // TODO: don't deinit testing allocator here so that we can confirm
+        // the archiver does everything by the books?
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
 
@@ -447,15 +461,38 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
     }
 }
 
-fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
-    const allocator = std.testing.allocator;
+
+    const worker_count = std.math.max(1, std.Thread.getCpuCount() catch 1);
+    const child_processes = try framework_allocator.alloc(*std.ChildProcess, worker_count);
+
+    var argv = std.ArrayList([]const u8).init(framework_allocator);
+    defer argv.deinit();
+    try argv.append("zig");
+    try argv.append("cc");
+    try argv.append("-c");
+    try argv.append("-o");
+    const file_name_arg = argv.items.len;
+    try argv.append("");
+    const source_name_arg = argv.items.len;
+    try argv.append("");
+    try argv.append("-target");
+    // TODO: Test other target triples with appropriate corresponding archive format!
+    try argv.append(target.targetToArgument());
 
     for (symbol_names) |file_symbols, index| {
+        const process_index = @mod(index, child_processes.len);
+        if (index >= child_processes.len) {
+            // TODO: read results etc.
+            _ = try child_processes[process_index].wait();
+            child_processes[process_index].deinit();
+        }
+
         const file_name = file_names[index];
-        const source_file_name = try std.fmt.allocPrint(allocator, "{s}.c", .{file_name});
-        defer allocator.free(source_file_name);
+        const source_file_name = try std.fmt.allocPrint(framework_allocator, "{s}.c", .{file_name});
+        defer framework_allocator.free(source_file_name);
         {
             const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{});
             defer source_file.close();
@@ -466,29 +503,21 @@ fn generateCompiledFilesWithSymbols(comptime target: Target, file_names: []const
             }
         }
 
-        var argv = std.ArrayList([]const u8).init(allocator);
-        defer argv.deinit();
+        argv.items[file_name_arg] = file_name;
+        argv.items[source_name_arg] = source_file_name;
 
-        try argv.append("zig");
-        try argv.append("cc");
-        try argv.append("-c");
-        try argv.append("-o");
-        try argv.append(file_name);
-        try argv.append(source_file_name);
-        try argv.append("-target");
-        // TODO: Test other target triples with appropriate corresponding archive format!
-        try argv.append(target.targetToArgument());
+        child_processes[process_index] = try std.ChildProcess.init(argv.items, framework_allocator);
+        child_processes[process_index].cwd = test_dir_info.cwd;
+        try child_processes[process_index].spawn();
+    }
 
-        // TODO: Do this in non-blocking way and spawn process  per-thread!
-        const result = try std.ChildProcess.exec(.{
-            .allocator = allocator,
-            .argv = argv.items,
-            .cwd = test_dir_info.cwd,
-        });
-
-        defer {
-            allocator.free(result.stdout);
-            allocator.free(result.stderr);
+    {
+        var process_index: u32 = 0;
+        while (process_index < symbol_names.len and process_index < child_processes.len) {
+            // TODO: read results etc.
+            _ = try child_processes[process_index].wait();
+            child_processes[process_index].deinit();
+            process_index += 1;
         }
     }
 }

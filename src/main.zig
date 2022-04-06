@@ -128,7 +128,7 @@ pub fn main() anyerror!void {
     const tracy = trace(@src());
     defer tracy.end();
 
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
     var allocator = arena.allocator();
