@@ -257,8 +257,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
 
     if (operation == .ranlib) {
         // https://www.freebsd.org/cgi/man.cgi?query=ranlib&sektion=1&apropos=0&manpath=FreeBSD+13.0-RELEASE+and+Ports
-        logger.err("Operation {} still needs to be implemented!\n", .{operation});
-        return error.TODO;
+        // logger.err("Operation {} still needs to be implemented!\n", .{operation});
+        // return error.TODO;
+        // TODO: implement modifiers for this operation!
     }
 
     var modifiers: Archive.Modifiers = .{};
@@ -380,8 +381,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             return error.TODO;
         },
         .ranlib => {
-            logger.err("ranlib still needs to be implemented!\n", .{});
-            return error.TODO;
+            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{ .mode = .read_write }));
+            defer file.close();
+            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
+            try archive.parse(allocator);
+            try archive.finalize(allocator);
         },
         .extract => {
             logger.err("extract still needs to be implemented!\n", .{});

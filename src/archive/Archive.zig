@@ -1322,7 +1322,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
             .contents = Contents{
                 .bytes = try allocator.alloc(u8, seek_forward_amount),
                 .length = seek_forward_amount,
-                .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10),
+                .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_mode, " "), 10),
                 .timestamp = timestamp,
                 .uid = uid,
                 .gid = gid,

@@ -14,6 +14,7 @@ const main = @import("main.zig");
 const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
 
+const no_files = [_][]const u8{};
 const no_symbols = [_][][]const u8{};
 const no_dir = "test/data/none";
 
@@ -246,15 +247,46 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
             try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
             try testParsingOfLlvmGeneratedArchive(framework_allocator, target, .implicit, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, .implicit, file_names, test_dir_info);
+            try testSymbolStrippingAndRanlib(test_dir_info);
+            try test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
         {
             try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
             try testParsingOfLlvmGeneratedArchive(framework_allocator, target, llvm_format, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(target, llvm_format, file_names, test_dir_info);
+            try testSymbolStrippingAndRanlib(test_dir_info);
+            try test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
     }
+}
+
+fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
+    const tracy = trace(@src());
+    defer tracy.end();
+    {
+        errdefer {
+            logger.err("Failed symbol stripping", .{});
+        }
+        const operation = "rS";
+        try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+        try doLlvmArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+
+        try compareGeneratedArchives(test_dir_info);
+    }
+    // TODO: to get this test working we need to ensure we parse the symbols within the contained
+    // files of the archive as well...
+    // {
+    //     errdefer {
+    //         logger.err("Failed acting as ranlib", .{});
+    //     }
+    //     const operation = "s";
+    //     try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+    //     try doLlvmArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+
+    //     try compareGeneratedArchives(test_dir_info);
+    // }
 }
 
 fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
@@ -266,16 +298,6 @@ fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, fil
     }
     const operation = "rc";
     try doZarArchiveOperation(format, operation, file_names, test_dir_info);
-    var cancel_cleanup = false;
-    defer if (!cancel_cleanup) {
-        test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name) catch |err| {
-            logger.warn("error {} deleting {s}", .{ err, zig_ar_archive_name });
-        };
-    };
-    errdefer {
-        cancel_cleanup = true;
-    }
-
     try compareGeneratedArchives(test_dir_info);
 }
 
