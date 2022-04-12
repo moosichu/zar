@@ -754,6 +754,8 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
 pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
+
+    // TODO: distribute this across n jobs in different chunks?
     for (file_names) |file_name| {
         // Open the file and read all of its contents
         const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_only }));

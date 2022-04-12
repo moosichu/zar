@@ -243,7 +243,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             'd' => break :operation Archive.Operation.delete,
             'm' => break :operation Archive.Operation.move,
             'p' => break :operation Archive.Operation.print_contents,
-            'w' => break :operation Archive.Operation.quick_append,
+            'q' => break :operation Archive.Operation.quick_append,
             's' => break :operation Archive.Operation.ranlib,
             't' => break :operation Archive.Operation.print_names,
             'x' => break :operation Archive.Operation.extract,
@@ -375,8 +375,16 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             try archive.moveFiles(files);
             try archive.finalize(allocator);
         },
-        else => {
-            logger.err("Operation {} still needs to be implemented!\n", .{operation});
+        .quick_append => {
+            logger.err("quick append still needs to be implemented!\n", .{});
+            return error.TODO;
+        },
+        .ranlib => {
+            logger.err("ranlib still needs to be implemented!\n", .{});
+            return error.TODO;
+        },
+        .extract => {
+            logger.err("extract still needs to be implemented!\n", .{});
             return error.TODO;
         },
     }
