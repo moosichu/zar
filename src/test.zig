@@ -275,18 +275,17 @@ fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
 
         try compareGeneratedArchives(test_dir_info);
     }
-    // TODO: to get this test working we need to ensure we parse the symbols within the contained
-    // files of the archive as well...
-    // {
-    //     errdefer {
-    //         logger.err("Failed acting as ranlib", .{});
-    //     }
-    //     const operation = "s";
-    //     try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
-    //     try doLlvmArchiveOperation(.implicit, operation, &no_files, test_dir_info);
 
-    //     try compareGeneratedArchives(test_dir_info);
-    // }
+    {
+        errdefer {
+            logger.err("Failed acting as ranlib", .{});
+        }
+        const operation = "s";
+        try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+        try doLlvmArchiveOperation(.implicit, operation, &no_files, test_dir_info);
+
+        try compareGeneratedArchives(test_dir_info);
+    }
 }
 
 fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {

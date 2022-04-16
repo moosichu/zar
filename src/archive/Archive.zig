@@ -751,6 +751,116 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     }
 }
 
+pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const u8, file_index: usize, file: fs.File, file_offset: u32) !void {
+    // TODO: make this read directly from the file contents buffer!
+
+    // Get the file magic
+    try file.seekTo(file_offset);
+
+    var magic: [4]u8 = undefined;
+    _ = try file.reader().read(&magic);
+
+    try file.seekTo(file_offset);
+
+    blk: {
+        // TODO: Load object from memory (upstream zld)
+        // TODO(TRC):Now this should assert that the magic number is what we expect it to be
+        // based on the parsed archive type! Not inferring what we should do based on it.
+        // switch(self.output_archive_type)
+        // {
+
+        // }
+        if (mem.eql(u8, magic[0..elf.MAGIC.len], elf.MAGIC)) {
+            if (self.output_archive_type == .ambiguous) {
+                // TODO: double check that this is the correct inference
+                self.output_archive_type = .gnu;
+            }
+            var elf_file = Elf{ .file = file, .name = file_name, .file_offset = file_offset };
+            defer elf_file.deinit(allocator);
+
+            // TODO: Do not use builtin.target like this, be more flexible!
+            elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                error.NotObject => break :blk,
+                else => |e| return e,
+            };
+
+            for (elf_file.symtab.items) |sym| {
+                switch (sym.st_info >> 4) {
+                    elf.STB_WEAK, elf.STB_GLOBAL => {
+                        if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
+                            const symbol = Symbol{
+                                .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
+                                .file_index = file_index,
+                            };
+
+                            try self.symbols.append(allocator, symbol);
+                        }
+                    },
+                    else => {},
+                }
+            }
+        } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
+            logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{file_name});
+            break :blk;
+
+            // var bitcode_file = Bitcode{ .file = file, .name = file_name };
+            // defer bitcode_file.deinit(allocator);
+
+            // // TODO: Do not use builtin.target like this, be more flexible!
+            // bitcode_file.parse(allocator, builtin.target) catch |err| switch (err) {
+            //     error.NotObject => break :blk,
+            //     else => |e| return e,
+            //};
+        } else {
+            // TODO(TRC):Now this should assert that the magic number is what we expect it to be
+            // based on the parsed archive type! Not inferring what we should do based on it.
+            const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
+
+            if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+                if (self.output_archive_type == .ambiguous) {
+                    self.output_archive_type = .darwin;
+                }
+                var macho_file = MachO{ .file = file, .name = file_name, .file_offset = file_offset };
+                defer macho_file.deinit(allocator);
+
+                macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                    error.NotObject => break :blk,
+                    else => |e| return e,
+                };
+
+                for (macho_file.symtab.items) |sym| {
+                    if (sym.ext() and sym.sect()) {
+                        const symbol = Symbol{
+                            .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                            .file_index = file_index,
+                        };
+
+                        try self.symbols.append(allocator, symbol);
+                    }
+                }
+            } else if (false) {
+                // TODO: Figure out the condition under which a file is a coff
+                // file. This was originally just an else clause - but a file
+                // might not contain any symbols!
+                var coff_file = Coff{ .file = file, .name = file_name };
+                defer coff_file.deinit(allocator);
+
+                coff_file.parse(allocator, builtin.target) catch |err| return err;
+
+                for (coff_file.symtab.items) |sym| {
+                    if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
+                        const symbol = Symbol{
+                            .name = try allocator.dupe(u8, sym.getName(&coff_file)),
+                            .file_index = file_index,
+                        };
+                        try self.symbols.append(allocator, symbol);
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
@@ -788,12 +898,6 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
             mode = file_stats.mode;
         }
 
-        // Get the file magic
-        var magic: [4]u8 = undefined;
-        _ = try file.reader().read(&magic);
-
-        try file.seekTo(0);
-
         if (self.modifiers.update_only) {
             // TODO: Write a test that checks for this functionality still working!
             // TODO: Is this even correct? Shouldn't it be comparing to mtime in archive already?
@@ -830,103 +934,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            try file.seekTo(0);
-            blk: {
-                // TODO: Load object from memory (upstream zld)
-                // TODO(TRC):Now this should assert that the magic number is what we expect it to be
-                // based on the parsed archive type! Not inferring what we should do based on it.
-                // switch(self.output_archive_type)
-                // {
-
-                // }
-                if (mem.eql(u8, magic[0..elf.MAGIC.len], elf.MAGIC)) {
-                    if (self.output_archive_type == .ambiguous) {
-                        // TODO: double check that this is the correct inference
-                        self.output_archive_type = .gnu;
-                    }
-                    var elf_file = Elf{ .file = file, .name = file_name };
-                    defer elf_file.deinit(allocator);
-
-                    // TODO: Do not use builtin.target like this, be more flexible!
-                    elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
-                        error.NotObject => break :blk,
-                        else => |e| return e,
-                    };
-
-                    for (elf_file.symtab.items) |sym| {
-                        switch (sym.st_info >> 4) {
-                            elf.STB_WEAK, elf.STB_GLOBAL => {
-                                if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
-                                    const symbol = Symbol{
-                                        .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
-                                        .file_index = file_index,
-                                    };
-                                    try self.symbols.append(allocator, symbol);
-                                }
-                            },
-                            else => {},
-                        }
-                    }
-                } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
-                    logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{file_name});
-                    break :blk;
-
-                    // var bitcode_file = Bitcode{ .file = file, .name = file_name };
-                    // defer bitcode_file.deinit(allocator);
-
-                    // // TODO: Do not use builtin.target like this, be more flexible!
-                    // bitcode_file.parse(allocator, builtin.target) catch |err| switch (err) {
-                    //     error.NotObject => break :blk,
-                    //     else => |e| return e,
-                    //};
-                } else {
-                    // TODO(TRC):Now this should assert that the magic number is what we expect it to be
-                    // based on the parsed archive type! Not inferring what we should do based on it.
-                    const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
-
-                    if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
-                        if (self.output_archive_type == .ambiguous) {
-                            self.output_archive_type = .darwin;
-                        }
-                        var macho_file = MachO{ .file = file, .name = file_name };
-                        defer macho_file.deinit(allocator);
-
-                        macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
-                            error.NotObject => break :blk,
-                            else => |e| return e,
-                        };
-
-                        for (macho_file.symtab.items) |sym| {
-                            if (sym.ext() and sym.sect()) {
-                                const symbol = Symbol{
-                                    .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
-                                    .file_index = file_index,
-                                };
-
-                                try self.symbols.append(allocator, symbol);
-                            }
-                        }
-                    } else if (false) {
-                        // TODO: Figure out the condition under which a file is a coff
-                        // file. This was originally just an else clause - but a file
-                        // might not contain any symbols!
-                        var coff_file = Coff{ .file = file, .name = file_name };
-                        defer coff_file.deinit(allocator);
-
-                        coff_file.parse(allocator, builtin.target) catch |err| return err;
-
-                        for (coff_file.symtab.items) |sym| {
-                            if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
-                                const symbol = Symbol{
-                                    .name = try allocator.dupe(u8, sym.getName(&coff_file)),
-                                    .file_index = file_index,
-                                };
-                                try self.symbols.append(allocator, symbol);
-                            }
-                        }
-                    }
-                }
-            }
+            try self.addToSymbolTable(allocator, file_name, file_index, file, 0);
         }
 
         // A trie-based datastructure would be better for this!
@@ -1067,16 +1075,17 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
                         }
                     }
 
-                    const symbol = Symbol{
-                        .name = current_symbol_string[0..symbol_length],
-                        // Note - we don't set the final file-index here,
-                        // we recalculate and override that later in parsing
-                        // when we know what they are!
-                        .file_index = number_array[self.symbols.items.len],
-                    };
+                    if (!self.modifiers.build_symbol_table) {
+                        const symbol = Symbol{
+                            .name = current_symbol_string[0..symbol_length],
+                            // Note - we don't set the final file-index here,
+                            // we recalculate and override that later in parsing
+                            // when we know what they are!
+                            .file_index = number_array[self.symbols.items.len],
+                        };
 
-                    try self.symbols.append(allocator, symbol);
-
+                        try self.symbols.append(allocator, symbol);
+                    }
                     current_symbol_string = current_symbol_string[skip_length..];
                 }
 
@@ -1278,22 +1287,23 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
                     seek_forward_amount = 0;
                     _ = try reader.read(symbol_string_bytes);
 
-                    for (ranlibs) |ranlib| {
-                        const symbol_string = mem.sliceTo(symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
+                    if (!self.modifiers.build_symbol_table) {
+                        for (ranlibs) |ranlib| {
+                            const symbol_string = mem.sliceTo(symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
 
-                        const symbol = Symbol{
-                            .name = symbol_string,
-                            // Note - we don't set the final file-index here,
-                            // we recalculate and override that later in parsing
-                            // when we know what they are!
-                            .file_index = @intCast(u64, ranlib.ran_off),
-                        };
+                            const symbol = Symbol{
+                                .name = symbol_string,
+                                // Note - we don't set the final file-index here,
+                                // we recalculate and override that later in parsing
+                                // when we know what they are!
+                                .file_index = @intCast(u64, ranlib.ran_off),
+                            };
 
-                        try self.symbols.append(allocator, symbol);
+                            try self.symbols.append(allocator, symbol);
+                        }
+
+                        // We have a symbol table!
                     }
-
-                    // We have a symbol table!
-                    // TODO: parse symbol table, we just skip it for now...
                     try reader.context.seekBy(seek_forward_amount);
                     continue;
                 }
@@ -1329,6 +1339,8 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
             },
         };
 
+        const offset_hack = try reader.context.getPos();
+
         if (self.inferred_archive_type == .gnuthin) {
             var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
@@ -1336,6 +1348,16 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
             try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
         } else {
             try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
+        }
+
+        if (self.modifiers.build_symbol_table) {
+            const post_offset_hack = try reader.context.getPos();
+            // TODO: Actually handle these errors!
+            self.addToSymbolTable(allocator, trimmed_archive_name, self.files.items.len, reader.context, @intCast(u32, offset_hack)) catch {
+                return error.TODO;
+            };
+
+            try reader.context.seekTo(post_offset_hack);
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
@@ -1352,11 +1374,13 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
         }
     }
 
-    for (self.symbols.items) |*symbol| {
-        if (file_offset_to_index.get(symbol.file_index)) |file_index| {
-            symbol.file_index = file_index;
-        } else {
-            symbol.file_index = invalid_file_index;
+    if (!self.modifiers.build_symbol_table) {
+        for (self.symbols.items) |*symbol| {
+            if (file_offset_to_index.get(symbol.file_index)) |file_index| {
+                symbol.file_index = file_index;
+            } else {
+                symbol.file_index = invalid_file_index;
+            }
         }
     }
 
