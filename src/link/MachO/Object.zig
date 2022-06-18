@@ -131,9 +131,9 @@ const DebugInfo = struct {
         allocator.free(self.debug_line);
         allocator.free(self.debug_line_str);
         allocator.free(self.debug_ranges);
-        self.inner.abbrev_table_list.deinit();
-        self.inner.compile_unit_list.deinit();
-        self.inner.func_list.deinit();
+        self.inner.abbrev_table_list.deinit(allocator);
+        self.inner.compile_unit_list.deinit(allocator);
+        self.inner.func_list.deinit(allocator);
     }
 };
 

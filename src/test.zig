@@ -487,7 +487,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
     defer tracy.end();
 
     const worker_count = std.math.max(1, std.Thread.getCpuCount() catch 1);
-    const child_processes = try framework_allocator.alloc(*std.ChildProcess, worker_count);
+    const child_processes = try framework_allocator.alloc(std.ChildProcess, worker_count);
 
     var argv = std.ArrayList([]const u8).init(framework_allocator);
     defer argv.deinit();
@@ -508,7 +508,6 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
         if (index >= child_processes.len) {
             // TODO: read results etc.
             _ = try child_processes[process_index].wait();
-            child_processes[process_index].deinit();
         }
 
         const file_name = file_names[index];
@@ -527,7 +526,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
         argv.items[file_name_arg] = file_name;
         argv.items[source_name_arg] = source_file_name;
 
-        child_processes[process_index] = try std.ChildProcess.init(argv.items, framework_allocator);
+        child_processes[process_index] = std.ChildProcess.init(argv.items, framework_allocator);
         child_processes[process_index].cwd = test_dir_info.cwd;
         try child_processes[process_index].spawn();
     }
@@ -537,7 +536,6 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
         while (process_index < symbol_names.len and process_index < child_processes.len) {
             // TODO: read results etc.
             _ = try child_processes[process_index].wait();
-            child_processes[process_index].deinit();
             process_index += 1;
         }
     }
