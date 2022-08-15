@@ -13,7 +13,12 @@ const Elf = @import("../link/Elf/Object.zig");
 const MachO = @import("../link/MachO/Object.zig");
 const macho = std.macho;
 const Coff = @import("../link/Coff/Object.zig");
-const Bitcode = @import("../link/Bitcode/Object.zig");
+// We don't have any kind of bitcode parsing support at the moment, but we need
+// to report dealing with bitcode files as an error. So embed magic like this
+// matching the format of the actual zld package for now.
+const Bitcode = struct {
+    const magic = "BC\xC0\xDE";
+};
 const coff = std.coff;
 const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
