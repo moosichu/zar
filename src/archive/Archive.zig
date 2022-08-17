@@ -9,10 +9,10 @@ const fs = std.fs;
 const mem = std.mem;
 const logger = std.log.scoped(.archive);
 const elf = std.elf;
-const Elf = @import("../link/Elf/Object.zig");
-const MachO = @import("Zld").MachO.Object;
+const Elf = @import("Zld").Elf;
+const MachO = @import("Zld").MachO;
 const macho = std.macho;
-const Coff = @import("../link/Coff/Object.zig");
+const Coff = @import("Zld").Coff;
 // We don't have any kind of bitcode parsing support at the moment, but we need
 // to report dealing with bitcode files as an error. So embed magic like this
 // matching the format of the actual zld package for now.
@@ -780,11 +780,11 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 // TODO: double check that this is the correct inference
                 self.output_archive_type = .gnu;
             }
-            var elf_file = Elf{ .file = file, .name = archived_file.name, .file_offset = file_offset };
+            var elf_file = Elf.Object{ .name = archived_file.name, .data = archived_file.contents.bytes };
             defer elf_file.deinit(allocator);
 
             // TODO: Do not use builtin.target like this, be more flexible!
-            elf_file.parse(allocator, builtin.target) catch |err| switch (err) {
+            elf_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
                 error.NotObject => break :blk,
                 else => |e| return e,
             };
@@ -831,7 +831,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                     break :mtime @intCast(u64, @divFloor(stat.mtime, 1_000_000_000));
                 };
 
-                var macho_file = MachO{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
+                var macho_file = MachO.Object{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
                 defer macho_file.deinit(allocator);
 
                 // TODO: Should be based on target cpu arch!
@@ -854,13 +854,13 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 // TODO: Figure out the condition under which a file is a coff
                 // file. This was originally just an else clause - but a file
                 // might not contain any symbols!
-                var coff_file = Coff{ .file = file, .name = archived_file.name };
+                var coff_file = Coff.Object{ .file = file, .name = archived_file.name };
                 defer coff_file.deinit(allocator);
 
                 coff_file.parse(allocator, builtin.target) catch |err| return err;
 
                 for (coff_file.symtab.items) |sym| {
-                    if (sym.storage_class == Coff.IMAGE_SYM_CLASS_EXTERNAL) {
+                    if (sym.storage_class == Coff.Object.IMAGE_SYM_CLASS_EXTERNAL) {
                         const symbol = Symbol{
                             .name = try allocator.dupe(u8, sym.getName(&coff_file)),
                             .file_index = file_index,
