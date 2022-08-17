@@ -320,7 +320,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     const llvm_ar_stat = try llvm_ar_file_handle.stat();
     const zig_ar_stat = try zig_ar_file_handle.stat();
 
-    try testing.expect(llvm_ar_stat.size == zig_ar_stat.size);
+    try testing.expectEqual(llvm_ar_stat.size, zig_ar_stat.size);
 
     const llvm_ar_buffer = try allocator.alloc(u8, llvm_ar_stat.size);
     const zig_ar_buffer = try allocator.alloc(u8, zig_ar_stat.size);
@@ -329,17 +329,17 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
 
     {
         const llvm_ar_read = try llvm_ar_file_handle.preadAll(llvm_ar_buffer, 0);
-        try testing.expect(llvm_ar_read == llvm_ar_stat.size);
+        try testing.expectEqual(llvm_ar_read, llvm_ar_stat.size);
     }
 
     {
         const zig_ar_read = try zig_ar_file_handle.preadAll(zig_ar_buffer, 0);
-        try testing.expect(zig_ar_read == zig_ar_stat.size);
+        try testing.expectEqual(zig_ar_read, zig_ar_stat.size);
     }
 
     for (llvm_ar_buffer) |llvm_ar_byte, index| {
         const zig_ar_byte = zig_ar_buffer[index];
-        try testing.expect(llvm_ar_byte == zig_ar_byte);
+        try testing.expectEqual(llvm_ar_byte, zig_ar_byte);
     }
 }
 
@@ -362,7 +362,7 @@ fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, t
     var memory_buffer = try framework_allocator.alloc(u8, 1024 * 1024);
     defer framework_allocator.free(memory_buffer);
     for (file_names) |file_name, index| {
-        try testing.expect(mem.eql(u8, archive.files.items[index].name, file_name));
+        try testing.expectEqualStrings(file_name, archive.files.items[index].name);
         const file = try test_dir.openFile(file_name, .{});
         defer file.close();
 
@@ -374,7 +374,7 @@ fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, t
             if (num_read == 0) {
                 break;
             }
-            try testing.expect(mem.eql(u8, memory_buffer[0..num_read], archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read]));
+            try testing.expectEqualStrings(archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read], memory_buffer[0..num_read]);
             current_start_pos = current_start_pos + num_read;
         }
     }
@@ -392,11 +392,11 @@ fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, t
             var parsed_symbol_name = parsed_symbol.name;
             // darwin targets will prepend symbol names with underscores
             if (target.operating_system == .macos) {
-                try testing.expect(parsed_symbol_name[0] == '_');
+                try testing.expectEqual(parsed_symbol_name[0], '_');
                 parsed_symbol_name = parsed_symbol_name[1..parsed_symbol_name.len];
             }
-            try testing.expect(mem.eql(u8, parsed_symbol_name, symbol_name));
-            try testing.expect(mem.eql(u8, archive.files.items[parsed_symbol.file_index].name, file_names[file_index]));
+            try testing.expectEqualStrings(parsed_symbol_name, symbol_name);
+            try testing.expectEqualStrings(archive.files.items[parsed_symbol.file_index].name, file_names[file_index]);
             current_index = current_index + 1;
         }
     }

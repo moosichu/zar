@@ -1,5 +1,9 @@
 const std = @import("std");
 
+fn addZld(obj: *std.build.LibExeObjStep) void {
+    obj.addPackagePath("Zld", "zld/src/Zld.zig");
+}
+
 pub fn build(b: *std.build.Builder) void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -14,6 +18,10 @@ pub fn build(b: *std.build.Builder) void {
     const exe = b.addExecutable("zar", "src/main.zig");
     var tests = b.addTest("src/test.zig");
     var tests_exe = b.addTestExe("test", "src/test.zig");
+
+    addZld(exe);
+    addZld(tests);
+    addZld(tests_exe);
 
     const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 

@@ -1,0 +1,3 @@
+[submodule "zld"]
+	path = zld
+	url = https://github.com/moosichu/zld.git

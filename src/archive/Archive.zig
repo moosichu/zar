@@ -10,7 +10,7 @@ const mem = std.mem;
 const logger = std.log.scoped(.archive);
 const elf = std.elf;
 const Elf = @import("../link/Elf/Object.zig");
-const MachO = @import("../link/MachO/Object.zig");
+const MachO = @import("Zld").MachO.Object;
 const macho = std.macho;
 const Coff = @import("../link/Coff/Object.zig");
 // We don't have any kind of bitcode parsing support at the moment, but we need
@@ -204,7 +204,7 @@ pub const Modifiers = struct {
 };
 
 pub const Contents = struct {
-    bytes: []u8,
+    bytes: []align(8) u8,
     length: u64,
     mode: u64,
     timestamp: u128, // file modified time
@@ -756,7 +756,7 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     }
 }
 
-pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const u8, file_index: usize, file: fs.File, file_offset: u32) !void {
+pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize, file: fs.File, file_offset: u32) !void {
     // TODO: make this read directly from the file contents buffer!
 
     // Get the file magic
@@ -780,7 +780,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const
                 // TODO: double check that this is the correct inference
                 self.output_archive_type = .gnu;
             }
-            var elf_file = Elf{ .file = file, .name = file_name, .file_offset = file_offset };
+            var elf_file = Elf{ .file = file, .name = archived_file.name, .file_offset = file_offset };
             defer elf_file.deinit(allocator);
 
             // TODO: Do not use builtin.target like this, be more flexible!
@@ -805,10 +805,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const
                 }
             }
         } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
-            logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{file_name});
+            logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{archived_file.name});
             break :blk;
 
-            // var bitcode_file = Bitcode{ .file = file, .name = file_name };
+            // var bitcode_file = Bitcode{ .file = file, .name = archived_file.name };
             // defer bitcode_file.deinit(allocator);
 
             // // TODO: Do not use builtin.target like this, be more flexible!
@@ -819,16 +819,23 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const
         } else {
             // TODO(TRC):Now this should assert that the magic number is what we expect it to be
             // based on the parsed archive type! Not inferring what we should do based on it.
+            // TODO: Should be based on target cpu arch!
             const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
             if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
                 if (self.output_archive_type == .ambiguous) {
                     self.output_archive_type = .darwin;
                 }
-                var macho_file = MachO{ .file = file, .name = file_name, .file_offset = file_offset };
+                const mtime: u64 = mtime: {
+                    const stat = file.stat() catch break :mtime 0;
+                    break :mtime @intCast(u64, @divFloor(stat.mtime, 1_000_000_000));
+                };
+
+                var macho_file = MachO{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
                 defer macho_file.deinit(allocator);
 
-                macho_file.parse(allocator, builtin.target) catch |err| switch (err) {
+                // TODO: Should be based on target cpu arch!
+                macho_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
                     error.NotObject => break :blk,
                     else => |e| return e,
                 };
@@ -847,7 +854,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, file_name: []const
                 // TODO: Figure out the condition under which a file is a coff
                 // file. This was originally just an else clause - but a file
                 // might not contain any symbols!
-                var coff_file = Coff{ .file = file, .name = file_name };
+                var coff_file = Coff{ .file = file, .name = archived_file.name };
                 defer coff_file.deinit(allocator);
 
                 coff_file.parse(allocator, builtin.target) catch |err| return err;
@@ -926,7 +933,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
-                .bytes = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
+                .bytes = try file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, @alignOf(u64), null),
                 .length = size,
                 .mode = mode,
                 .timestamp = timestamp,
@@ -939,7 +946,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            try self.addToSymbolTable(allocator, file_name, file_index, file, 0);
+            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0);
         }
 
         // A trie-based datastructure would be better for this!
@@ -1335,7 +1342,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
             .contents = Contents{
-                .bytes = try allocator.alloc(u8, seek_forward_amount),
+                .bytes = try allocator.alignedAlloc(u8, @alignOf(u64), seek_forward_amount),
                 .length = seek_forward_amount,
                 .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_mode, " "), 10),
                 .timestamp = timestamp,
@@ -1358,7 +1365,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || IoError || Cri
         if (self.modifiers.build_symbol_table) {
             const post_offset_hack = try reader.context.getPos();
             // TODO: Actually handle these errors!
-            self.addToSymbolTable(allocator, trimmed_archive_name, self.files.items.len, reader.context, @intCast(u32, offset_hack)) catch {
+            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @intCast(u32, offset_hack)) catch {
                 return error.TODO;
             };
 
