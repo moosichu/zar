@@ -48,8 +48,8 @@ jobs:
                   repository: moosichu/redis
                   ref: moosichu/test-zar
                   path: redis
-            - name: Test Redis
-              run: make CC="zig cc" CXX="zig c++" AR="../zig-out/bin/zar"
+            - name: Build Redis With Zar
+              run: make CC="zig cc" CXX="zig c++" AR="../zig-out/bin/zar" USE_JEMALLOC=no USE_SYSTEMD=no
               working-directory: redis
         
               
