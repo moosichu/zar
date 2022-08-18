@@ -45,7 +45,7 @@ jobs:
             - name: Fetch Redis
               uses: actions/checkout@v2.4.2
               with:
-                  name: moosichu/redis
+                  repository: moosichu/redis
                   ref: moosichu/test-zar
                   path: redis
             - name: Test Redis
