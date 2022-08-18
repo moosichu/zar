@@ -49,7 +49,7 @@ jobs:
                   ref: moosichu/test-zar
                   path: redis
             - name: Build Redis With Zar
-              run: make CC="zig cc" CXX="zig c++" AR="../zig-out/bin/zar" USE_JEMALLOC=no USE_SYSTEMD=no
+              run: make CC="zig cc" CXX="zig c++" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" USE_JEMALLOC=no USE_SYSTEMD=no
               working-directory: redis
         
               
