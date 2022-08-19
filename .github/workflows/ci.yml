@@ -3,53 +3,56 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-    build:
-        name: Build and test
-        timeout-minutes: 15
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                os: [ubuntu-latest, macos-latest, windows-latest]
-
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v1
-              with:
-                  submodules: recursive
-            - name: Setup Zig
-              uses: goto-bus-stop/setup-zig@v1
-              with:
-                  version: master
-            - name: Build
-              run: zig build
-            - name: Test
-              run: zig build test
-    test_redis:
-        name: Test Redis
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                os: [ubuntu-latest, macos-latest]
-                
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v2.4.2
-              with:
-                  submodules: recursive
-            - name: Setup Zig
-              uses: goto-bus-stop/setup-zig@v1
-              with:
-                  version: master
-            - name: Build
-              run: zig build
-            - name: Fetch Redis
-              uses: actions/checkout@v2.4.2
-              with:
-                  repository: moosichu/redis
-                  ref: moosichu/test-zar
-                  path: redis
-            - name: Build Redis With Zar
-              run: make CC="zig cc" CXX="zig c++" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" USE_JEMALLOC=no USE_SYSTEMD=no
-              working-directory: redis
-        
-              
+  build:
+    name: Build and test
+    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+        with:
+          submodules: recursive
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+      - name: Build
+        run: zig build
+      - name: Test
+        run: zig build test
+  test_redis:
+    name: Test Redis
+    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2.4.2
+        with:
+          submodules: recursive
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+      - name: Build
+        run: zig build
+      - name: Fetch Redis
+        uses: actions/checkout@v2.4.2
+        with:
+          repository: moosichu/redis
+          ref: moosichu/test-zar
+          path: redis
+      - name: Build Redis Linux
+        run: make CC="zig cc -target x86_64-linux-musl" CXX="zig c++ -target x86_64-linux-musl" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Linux" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
+        working-directory: redis
+      - name: Clean
+        run: make clean
+        working-directory: redis
+      - name: Build Redis macOS
+        run: make CC="zig cc -target x86_64-macos" CXX="zig c++ -target x86_64-macos" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Darwin" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
+        working-directory: redis
