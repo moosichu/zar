@@ -121,6 +121,9 @@ test "Test Archive Sorted" {
 }
 
 test "Test Argument Errors" {
+    if (builtin.target.os.tag == .windows) {
+        return;
+    }
     const allocator = std.testing.allocator;
     var test_dir_info = try TestDirInfo.getInfo();
     defer test_dir_info.cleanup();
