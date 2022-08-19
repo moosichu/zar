@@ -48,11 +48,11 @@ jobs:
           ref: moosichu/test-zar
           path: redis
       - name: Build Redis Linux
-        run: make CC="zig cc -target x86_64-linux-musl" CXX="zig c++ -target x86_64-linux-musl" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Linux" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
+        run: make CC="zig cc -target x86_64-linux-musl" CXX="zig c++ -target x86_64-linux-musl" AR="${{ github.workspace }}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Linux" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
         working-directory: redis
       - name: Clean
         run: make clean
         working-directory: redis
       - name: Build Redis macOS
-        run: make CC="zig cc -target x86_64-macos" CXX="zig c++ -target x86_64-macos" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Darwin" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
+        run: make CC="zig cc -target x86_64-macos" CXX="zig c++ -target x86_64-macos" AR="${{ github.workspace }}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Darwin" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
         working-directory: redis
