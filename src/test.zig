@@ -11,6 +11,8 @@ const Allocator = std.mem.Allocator;
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
 
+const path_to_zar = "../../../zig-out/bin/zar";
+
 const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
 
@@ -38,7 +40,7 @@ const no_dir = "test/data/none";
 
 // Allows us to invoke zar as a program, just to really confirm it works
 // end-to-end.
-const invoke_zar_as_child_process = false;
+const always_invoke_zar_as_child_process = false;
 
 test "Test Archive Text Basic" {
     const test1_dir = "test/data/test1";
@@ -116,6 +118,48 @@ test "Test Archive Sorted" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     try doStandardTests(arena.allocator(), no_dir, &test_sort_names, &test_sort);
+}
+
+test "Test Argument Errors" {
+    if (builtin.target.os.tag == .windows) {
+        return;
+    }
+    const allocator = std.testing.allocator;
+    var test_dir_info = try TestDirInfo.getInfo();
+    defer test_dir_info.cleanup();
+
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.append(path_to_zar);
+
+    {
+        try argv.resize(1);
+        const expected_out: ExpectedOut = .{
+            .stderr = "error(archive_main): " ++ main.error_prefix ++ "An operation must be provided.\n",
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
+
+    {
+        try argv.resize(1);
+        try argv.append("j");
+        const expected_out: ExpectedOut = .{
+            .stderr = "error(archive_main): " ++ main.error_prefix ++ "'j' is not a valid operation.\n",
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
+
+    {
+        try argv.resize(1);
+        try argv.append("rj");
+        const expected_out: ExpectedOut = .{
+            .stderr = "error(archive_main): " ++ main.error_prefix ++ "'j' is not a valid modifier.\n",
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
 }
 
 fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
@@ -419,6 +463,46 @@ fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, file_names:
     }
 }
 
+const ExpectedOut = struct {
+    stdout: ?[]const u8 = null,
+    stderr: ?[]const u8 = null,
+};
+
+fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_info: TestDirInfo, expected_out: ExpectedOut) !void {
+    // argments[0] must be path_to_zar
+    var invoke_as_child_process = always_invoke_zar_as_child_process;
+    // At the moment it's easiest to verify the output of stdout/stderr by launching
+    // zar as a child process, so just doing it like this for now.
+    invoke_as_child_process = invoke_as_child_process or expected_out.stderr != null;
+    invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
+    if (invoke_as_child_process) {
+        const result = try std.ChildProcess.exec(.{
+            .allocator = allocator,
+            .argv = arguments,
+            .cwd = test_dir_info.cwd,
+        });
+
+        defer {
+            allocator.free(result.stdout);
+            allocator.free(result.stderr);
+        }
+
+        if (expected_out.stdout) |expected_stdout| {
+            try testing.expectEqualStrings(expected_stdout, result.stdout);
+        }
+        if (expected_out.stderr) |expected_stderr| {
+            try testing.expectEqualStrings(expected_stderr, result.stderr);
+        }
+    } else {
+        // TODO: don't deinit testing allocator here so that we can confirm
+        // the archiver does everything by the books?
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+
+        main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), arguments) catch {};
+    }
+}
+
 fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
@@ -427,32 +511,14 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
-    try argv.append("../../../zig-out/bin/zar");
+    try argv.append(path_to_zar);
     try argv.append(format.llvmFormatToArgument());
 
     try argv.append(operation);
     try argv.append(zig_ar_archive_name);
     try argv.appendSlice(file_names);
 
-    if (invoke_zar_as_child_process) {
-        const result = try std.ChildProcess.exec(.{
-            .allocator = allocator,
-            .argv = argv.items,
-            .cwd = test_dir_info.cwd,
-        });
-
-        defer {
-            allocator.free(result.stdout);
-            allocator.free(result.stderr);
-        }
-    } else {
-        // TODO: don't deinit testing allocator here so that we can confirm
-        // the archiver does everything by the books?
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
-
-        try main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), argv.items);
-    }
+    try invokeZar(allocator, argv.items, test_dir_info, .{});
 }
 
 fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {

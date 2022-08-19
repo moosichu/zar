@@ -9,7 +9,7 @@ const process = std.process;
 
 const Archive = @import("archive/Archive.zig");
 
-const overview =
+pub const overview =
     \\Zig Archiver
     \\
     \\Usage: zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
@@ -51,6 +51,8 @@ const overview =
     \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
 ;
+
+pub const error_prefix = overview ++ "\n\x1B[1;31merror\x1B[0m: ";
 
 const version = "0.0.0";
 
@@ -94,7 +96,7 @@ pub fn log(
 // through to the program be the user, we do this often enough that it's worth
 // having a procedure for it.
 fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
-    logger.err(overview ++ "\nShowing help text above as error occured:\n" ++ errorString, args);
+    logger.err(error_prefix ++ errorString, args);
 }
 
 fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8) bool {
@@ -278,9 +280,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 'R' => modifiers.sort_symbol_table = .set_false,
                 'a' => modifiers.move_setting = .before,
                 'b', 'i' => modifiers.move_setting = .after,
-                // TODO: should we print warning with unknown modifier?
                 // TODO: handle other modifiers!
-                else => {},
+                else => {
+                    printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
+                    return;
+                },
             }
         }
     }

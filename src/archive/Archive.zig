@@ -211,7 +211,7 @@ pub const Contents = struct {
     uid: u32,
     gid: u32,
 
-    // TODO: dellocation
+    // TODO: deallocation
 
     pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
         try out_stream.writeAll(self.bytes);
