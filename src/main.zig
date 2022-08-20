@@ -80,7 +80,7 @@ pub fn log(
 ) void {
     const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
 
-    const prefix = level.asText() ++ scope_prefix;
+    const prefix = comptime level.asText() ++ scope_prefix;
 
     std.debug.getStderrMutex().lock();
     defer std.debug.getStderrMutex().unlock();
