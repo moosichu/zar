@@ -19,6 +19,10 @@ pub fn build(b: *std.build.Builder) void {
     var tests = b.addTest("src/test.zig");
     var tests_exe = b.addTestExe("test", "src/test.zig");
 
+    exe.use_stage1 = false;
+    tests.use_stage1 = false;
+    tests_exe.use_stage1 = false;
+
     addZld(exe);
     addZld(tests);
     addZld(tests_exe);
