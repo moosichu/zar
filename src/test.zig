@@ -135,7 +135,7 @@ test "Test Argument Errors" {
     {
         try argv.resize(1);
         const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): " ++ main.error_prefix ++ "An operation must be provided.\n",
+            .stderr = "error(archive_main): " ++ main.zar_error_prefix ++ "An operation must be provided.\n",
         };
 
         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
@@ -145,7 +145,7 @@ test "Test Argument Errors" {
         try argv.resize(1);
         try argv.append("j");
         const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): " ++ main.error_prefix ++ "'j' is not a valid operation.\n",
+            .stderr = "error(archive_main): " ++ main.zar_error_prefix ++ "'j' is not a valid operation.\n",
         };
 
         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
@@ -155,7 +155,7 @@ test "Test Argument Errors" {
         try argv.resize(1);
         try argv.append("rj");
         const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): " ++ main.error_prefix ++ "'j' is not a valid modifier.\n",
+            .stderr = "error(archive_main): " ++ main.zar_error_prefix ++ "'j' is not a valid modifier.\n",
         };
 
         try invokeZar(allocator, argv.items, test_dir_info, expected_out);

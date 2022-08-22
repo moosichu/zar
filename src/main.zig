@@ -9,7 +9,7 @@ const process = std.process;
 
 const Archive = @import("archive/Archive.zig");
 
-pub const overview =
+pub const zar_overview =
     \\Zig Archiver
     \\
     \\Usage: zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
@@ -52,7 +52,27 @@ pub const overview =
     \\
 ;
 
-pub const error_prefix = overview ++ "\n\x1B[1;31merror\x1B[0m: ";
+pub const ranlib_overview =
+    \\Zig Ranlib
+    \\
+    \\Usage: zar ranlib [options] -[modifiers] <archive>
+    \\
+    \\Options:
+    \\ --version
+    \\      Print program version details and exit.
+    \\ -h, --help
+    \\      Print (this) help text and exit.
+    \\
+    \\Modifiers:
+    \\ D - Use zero for timestamps, GIDs and UIDs in archived files (enabled by default).
+    \\ U - Use real timestamps, GIDS and UIDs for archived files.
+    \\
+    \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
+    \\
+;
+
+pub const zar_error_prefix = zar_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
+pub const ranlib_error_prefix = ranlib_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
 
 const version = "0.0.0";
 
@@ -92,16 +112,20 @@ pub fn log(
     }
 }
 
-// We want to show program overview if invalid argument combination is passed
+// We want to show program zar_overview if invalid argument combination is passed
 // through to the program be the user, we do this often enough that it's worth
 // having a procedure for it.
-fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
-    logger.err(error_prefix ++ errorString, args);
+fn printArgumentError(comptime errorString: []const u8, args: anytype, in_ranlib_mode: bool) void {
+    if (in_ranlib_mode) {
+        logger.err(ranlib_error_prefix ++ errorString, args);
+    } else {
+        logger.err(zar_error_prefix ++ errorString, args);
+    }
 }
 
-fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8) bool {
+fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8, in_ranlib_mode: bool) bool {
     if (index >= args.len) {
-        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
+        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{}, in_ranlib_mode);
         return false;
     }
     return true;
@@ -163,10 +187,21 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
 
     var archive_type = Archive.ArchiveType.ambiguous;
 
+    // Check if we are in ranlib mode!
+    const in_ranlib_mode = in_ranlib_mode: {
+        if (arg_index < args.len) {
+            if (mem.eql(u8, "ranlib", args[arg_index])) {
+                arg_index = arg_index + 1;
+                break :in_ranlib_mode true;
+            }
+        }
+        break :in_ranlib_mode false;
+    };
+
     // Process Options First
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
-        if (!checkArgsBounds(args, arg_index, "operation")) {
+        if (!checkArgsBounds(args, arg_index, "operation", in_ranlib_mode)) {
             return;
         }
 
@@ -179,7 +214,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             const help_string = "--help";
             const help_shortcut = "-h";
             const version_string = "--version";
-            if (mem.startsWith(u8, current_arg, format_string_prefix)) {
+            if (!in_ranlib_mode and mem.startsWith(u8, current_arg, format_string_prefix)) {
                 // TODO: Handle format option!
                 keep_processing_current_option = true;
 
@@ -198,7 +233,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 }
                 arg_index = arg_index + 1;
                 continue;
-            } else if (mem.startsWith(u8, current_arg, plugin_string_prefix)) {
+            } else if (!in_ranlib_mode and mem.startsWith(u8, current_arg, plugin_string_prefix)) {
                 keep_processing_current_option = true;
                 arg_index = arg_index + 1;
                 continue;
@@ -207,7 +242,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 arg_index = arg_index + 1;
                 continue;
             } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
-                try stdout.print(overview, .{});
+                if (in_ranlib_mode) {
+                    try stdout.print(ranlib_overview, .{});
+                } else {
+                    try stdout.print(zar_overview, .{});
+                }
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
                 // TODO: calculate build, archive type & host!
@@ -219,41 +258,58 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
         }
     }
 
-    if (!checkArgsBounds(args, arg_index, "operation")) {
-        return;
-    }
+    var modifier_slice: []const u8 = "";
+    const operation = operation: {
+        if (in_ranlib_mode) {
+            if (arg_index < args.len) {
+                var arg_slice = args[arg_index][0..];
+                if (arg_slice[0] == '-') {
+                    if (arg_slice.len == 1) {
+                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{}, in_ranlib_mode);
+                        return;
+                    }
 
-    const operation_slice = slice: {
-        // the operation may start with a hyphen - so slice it!
-        var arg_slice = args[arg_index][0..args[arg_index].len];
-        if (arg_slice[0] == '-') {
-            if (arg_slice.len == 1) {
-                printArgumentError("A valid operation must be provided - only hyphen found.", .{});
+                    modifier_slice = arg_slice[1..];
+                }
+            }
+            break :operation Archive.Operation.ranlib;
+        } else {
+            if (!checkArgsBounds(args, arg_index, "operation", in_ranlib_mode)) {
                 return;
             }
+            const operation_slice = slice: {
+                // the operation may start with a hyphen - so slice it!
+                var arg_slice = args[arg_index][0..];
+                if (arg_slice[0] == '-') {
+                    if (arg_slice.len == 1) {
+                        printArgumentError("A valid operation must be provided - only hyphen found.", .{}, in_ranlib_mode);
+                        return;
+                    }
 
-            arg_slice = arg_slice[1..arg_slice.len];
-        }
+                    arg_slice = arg_slice[1..arg_slice.len];
+                }
 
-        break :slice arg_slice;
-    };
+                break :slice arg_slice;
+            };
 
-    // Process Operation
-    const operation = operation: {
-        switch (operation_slice[0]) {
-            'r' => break :operation Archive.Operation.insert,
-            'd' => break :operation Archive.Operation.delete,
-            'm' => break :operation Archive.Operation.move,
-            'p' => break :operation Archive.Operation.print_contents,
-            'q' => break :operation Archive.Operation.quick_append,
-            's' => break :operation Archive.Operation.ranlib,
-            't' => break :operation Archive.Operation.print_names,
-            'x' => break :operation Archive.Operation.extract,
-            'S' => break :operation Archive.Operation.print_symbols,
-            else => {
-                printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
-                return;
-            },
+            modifier_slice = operation_slice[1..];
+
+            // Process Operation
+            switch (operation_slice[0]) {
+                'r' => break :operation Archive.Operation.insert,
+                'd' => break :operation Archive.Operation.delete,
+                'm' => break :operation Archive.Operation.move,
+                'p' => break :operation Archive.Operation.print_contents,
+                'q' => break :operation Archive.Operation.quick_append,
+                's' => break :operation Archive.Operation.ranlib,
+                't' => break :operation Archive.Operation.print_names,
+                'x' => break :operation Archive.Operation.extract,
+                'S' => break :operation Archive.Operation.print_symbols,
+                else => {
+                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]}, in_ranlib_mode);
+                    return;
+                },
+            }
         }
     };
 
@@ -265,8 +321,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     }
 
     var modifiers: Archive.Modifiers = .{};
-    if (operation_slice.len > 1) {
-        const modifier_slice = operation_slice[1..];
+    if (modifier_slice.len > 0) {
         for (modifier_slice) |modifier_char| {
             switch (modifier_char) {
                 'c' => modifiers.create = true,
@@ -282,7 +337,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 'b', 'i' => modifiers.move_setting = .after,
                 // TODO: handle other modifiers!
                 else => {
-                    printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
+                    printArgumentError("'{c}' is not a valid modifier.", .{modifier_char}, in_ranlib_mode);
                     return;
                 },
             }
@@ -291,7 +346,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
 
     arg_index = arg_index + 1;
 
-    if (!checkArgsBounds(args, arg_index, "archive")) {
+    if (!checkArgsBounds(args, arg_index, "archive", in_ranlib_mode)) {
         return;
     }
 
