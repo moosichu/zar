@@ -47,6 +47,7 @@ pub const zar_overview =
     \\ S - Do not generate symbol table
     \\ r - Create sorted symbol table
     \\ R - Do not create sorted symbol table
+    \\ V - Display the version and exit
     \\
     \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
     \\
@@ -58,7 +59,7 @@ pub const ranlib_overview =
     \\Usage: zar ranlib [options] -[modifiers] <archive>
     \\
     \\Options:
-    \\ --version
+    \\ -v, --version
     \\      Print program version details and exit.
     \\ -h, --help
     \\      Print (this) help text and exit.
@@ -77,7 +78,7 @@ pub const ranlib_error_prefix = ranlib_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
 const version = "0.0.0";
 
 const version_details =
-    \\zar (https://github.com/moosichu/zar):
+    \\zar {s} (https://github.com/moosichu/zar):
     \\  zar version {s}
     \\  {s} build
     \\  default archive type: {s}
@@ -88,6 +89,22 @@ const version_details =
 pub const full_logging = builtin.mode == .Debug;
 pub const debug_errors = builtin.mode == .Debug;
 pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
+
+pub const Mode = enum { ar, ranlib };
+
+fn printHelp(stdout: fs.File.Writer, mode: Mode) !void {
+    switch (mode) {
+        .ar => try stdout.print(zar_overview, .{}),
+        .ranlib => try stdout.print(ranlib_overview, .{}),
+    }
+}
+
+fn printVersion(stdout: fs.File.Writer, mode: Mode) !void {
+    // TODO: calculate build, archive type & host!
+    const target = builtin.target;
+    const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
+    try stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
+}
 
 // For the release standalone program, we just want to display concise errors
 // to the end-user, but during development we want them to show up as part of
@@ -115,17 +132,17 @@ pub fn log(
 // We want to show program zar_overview if invalid argument combination is passed
 // through to the program be the user, we do this often enough that it's worth
 // having a procedure for it.
-fn printArgumentError(comptime errorString: []const u8, args: anytype, in_ranlib_mode: bool) void {
-    if (in_ranlib_mode) {
+fn printArgumentError(comptime errorString: []const u8, args: anytype, mode: Mode) void {
+    if (mode == .ranlib) {
         logger.err(ranlib_error_prefix ++ errorString, args);
     } else {
         logger.err(zar_error_prefix ++ errorString, args);
     }
 }
 
-fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8, in_ranlib_mode: bool) bool {
+fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8, mode: Mode) bool {
     if (index >= args.len) {
-        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{}, in_ranlib_mode);
+        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{}, mode);
         return false;
     }
     return true;
@@ -148,6 +165,51 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
         },
     };
     return open_file_handle;
+}
+
+fn processModifier(modifier_char: u8, mode: Mode, modifiers: *Archive.Modifiers) bool {
+    switch (mode) {
+        .ar => switch (modifier_char) {
+            'c' => modifiers.create = true,
+            'u' => modifiers.update_only = true,
+            'U' => modifiers.use_real_timestamps_and_ids = true,
+            'D' => modifiers.use_real_timestamps_and_ids = false,
+            'v' => modifiers.verbose = true,
+            's' => modifiers.build_symbol_table = true,
+            'S' => modifiers.build_symbol_table = false,
+            'r' => modifiers.sort_symbol_table = .set_true,
+            'R' => modifiers.sort_symbol_table = .set_false,
+            'a' => modifiers.move_setting = .before,
+            'b', 'i' => modifiers.move_setting = .after,
+            'V' => modifiers.show_version = true,
+            'h' => modifiers.help = true,
+            // TODO: handle other modifiers!
+            else => {
+                printArgumentError("'{c}' is not a valid modifier.", .{modifier_char}, mode);
+                return false;
+            },
+        },
+        .ranlib => switch (modifier_char) {
+            'U' => modifiers.use_real_timestamps_and_ids = true,
+            'D' => modifiers.use_real_timestamps_and_ids = false,
+            // ranlib will always priorities which one of these modifiers comes first
+            // this is in contrast to ar which always shows help over version if it's present
+            // matching this specific behaviour may be overkill, but would rather
+            // aggressively match llvm on this front as much as possible by default
+            // TODO: write tests for these cases of ordering modifiers
+            'v' => if (!modifiers.help) {
+                modifiers.show_version = true;
+            },
+            'h' => if (!modifiers.show_version) {
+                modifiers.help = true;
+            },
+            else => {
+                printArgumentError("'{c}' is not a valid option.", .{modifier_char}, mode);
+                return false;
+            },
+        },
+    }
+    return true;
 }
 
 pub fn main() anyerror!void {
@@ -188,20 +250,23 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Check if we are in ranlib mode!
-    const in_ranlib_mode = in_ranlib_mode: {
+    const mode: Mode = mode: {
         if (arg_index < args.len) {
             if (mem.eql(u8, "ranlib", args[arg_index])) {
                 arg_index = arg_index + 1;
-                break :in_ranlib_mode true;
+                break :mode .ranlib;
             }
         }
-        break :in_ranlib_mode false;
+        break :mode .ar;
     };
 
     // Process Options First
+    // TODO: based on observed behaviour of ranlib and ar, this order isn't actually
+    // fixed. Need to write some tests to fuzz these and then match llvm's behaviour
+    // in these cases.
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
-        if (!checkArgsBounds(args, arg_index, "operation", in_ranlib_mode)) {
+        if (!checkArgsBounds(args, arg_index, "operation", mode)) {
             return;
         }
 
@@ -214,7 +279,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             const help_string = "--help";
             const help_shortcut = "-h";
             const version_string = "--version";
-            if (!in_ranlib_mode and mem.startsWith(u8, current_arg, format_string_prefix)) {
+            if (mode == .ar and mem.startsWith(u8, current_arg, format_string_prefix)) {
                 // TODO: Handle format option!
                 keep_processing_current_option = true;
 
@@ -233,7 +298,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 }
                 arg_index = arg_index + 1;
                 continue;
-            } else if (!in_ranlib_mode and mem.startsWith(u8, current_arg, plugin_string_prefix)) {
+            } else if (mode == .ar and mem.startsWith(u8, current_arg, plugin_string_prefix)) {
                 keep_processing_current_option = true;
                 arg_index = arg_index + 1;
                 continue;
@@ -242,17 +307,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 arg_index = arg_index + 1;
                 continue;
             } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
-                if (in_ranlib_mode) {
-                    try stdout.print(ranlib_overview, .{});
-                } else {
-                    try stdout.print(zar_overview, .{});
-                }
+                try printHelp(stdout, mode);
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
-                // TODO: calculate build, archive type & host!
-                const target = builtin.target;
-                const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
-                try stdout.print(version_details, .{ version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
+                try printVersion(stdout, mode);
                 return;
             }
         }
@@ -260,12 +318,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
 
     var modifier_slice: []const u8 = "";
     const operation = operation: {
-        if (in_ranlib_mode) {
+        if (mode == .ranlib) {
             if (arg_index < args.len) {
                 var arg_slice = args[arg_index][0..];
                 if (arg_slice[0] == '-') {
                     if (arg_slice.len == 1) {
-                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{}, in_ranlib_mode);
+                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{}, mode);
                         return;
                     }
 
@@ -274,7 +332,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             }
             break :operation Archive.Operation.ranlib;
         } else {
-            if (!checkArgsBounds(args, arg_index, "operation", in_ranlib_mode)) {
+            if (!checkArgsBounds(args, arg_index, "operation", mode)) {
                 return;
             }
             const operation_slice = slice: {
@@ -282,7 +340,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 var arg_slice = args[arg_index][0..];
                 if (arg_slice[0] == '-') {
                     if (arg_slice.len == 1) {
-                        printArgumentError("A valid operation must be provided - only hyphen found.", .{}, in_ranlib_mode);
+                        printArgumentError("A valid operation must be provided - only hyphen found.", .{}, mode);
                         return;
                     }
 
@@ -306,47 +364,54 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 'x' => break :operation Archive.Operation.extract,
                 'S' => break :operation Archive.Operation.print_symbols,
                 else => {
-                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]}, in_ranlib_mode);
+                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]}, mode);
                     return;
                 },
             }
         }
     };
 
-    if (operation == .ranlib) {
-        // https://www.freebsd.org/cgi/man.cgi?query=ranlib&sektion=1&apropos=0&manpath=FreeBSD+13.0-RELEASE+and+Ports
-        // logger.err("Operation {} still needs to be implemented!\n", .{operation});
-        // return error.TODO;
-        // TODO: implement modifiers for this operation!
-    }
-
     var modifiers: Archive.Modifiers = .{};
-    if (modifier_slice.len > 0) {
+    while (true) {
+        if (modifier_slice.len == 0) {
+            // operation argument didn't have any modifiers,
+            // so incremement arg index if we are in ar land
+            if (mode == .ar) {
+                arg_index = arg_index + 1;
+            }
+            break;
+        }
         for (modifier_slice) |modifier_char| {
-            switch (modifier_char) {
-                'c' => modifiers.create = true,
-                'u' => modifiers.update_only = true,
-                'U' => modifiers.use_real_timestamps_and_ids = true,
-                'D' => modifiers.use_real_timestamps_and_ids = false,
-                'v' => modifiers.verbose = true,
-                's' => modifiers.build_symbol_table = true,
-                'S' => modifiers.build_symbol_table = false,
-                'r' => modifiers.sort_symbol_table = .set_true,
-                'R' => modifiers.sort_symbol_table = .set_false,
-                'a' => modifiers.move_setting = .before,
-                'b', 'i' => modifiers.move_setting = .after,
-                // TODO: handle other modifiers!
-                else => {
-                    printArgumentError("'{c}' is not a valid modifier.", .{modifier_char}, in_ranlib_mode);
-                    return;
-                },
+            if (!processModifier(modifier_char, mode, &modifiers)) {
+                return;
             }
         }
+
+        arg_index = arg_index + 1;
+
+        // check if we still have some modifiers!
+        if (arg_index >= args.len) break;
+        var arg_slice = args[arg_index][0..];
+        if (arg_slice[0] != '-') break;
+        if (arg_slice.len == 1) {
+            printArgumentError("A valid modifer must be provided - only hyphen found.", .{}, mode);
+            return;
+        }
+
+        modifier_slice = arg_slice[1..arg_slice.len];
     }
 
-    arg_index = arg_index + 1;
+    if (modifiers.help) {
+        try printHelp(stdout, mode);
+        return;
+    }
 
-    if (!checkArgsBounds(args, arg_index, "archive", in_ranlib_mode)) {
+    if (modifiers.show_version) {
+        try printVersion(stdout, mode);
+        return;
+    }
+
+    if (!checkArgsBounds(args, arg_index, "archive", mode)) {
         return;
     }
 

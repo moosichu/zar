@@ -201,6 +201,8 @@ pub const Modifiers = struct {
     sort_symbol_table: ExplicitBooleanSetting = .ambiguous,
     verbose: bool = false,
     move_setting: MoveSetting = .end,
+    show_version: bool = false,
+    help: bool = false,
 };
 
 pub const Contents = struct {
@@ -263,8 +265,9 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
     const context_str = @tagName(context);
 
     switch (err) {
-        error.AccessDenied => logger.err("Error " ++ context_str ++ " {s}, access denied.", .{file_name}),
-        else => logger.err("Error " ++ context_str ++ " {s}.", .{file_name}),
+        error.AccessDenied => logger.err("Error " ++ context_str ++ " '{s}', access denied.", .{file_name}),
+        error.FileNotFound => logger.err("Error " ++ context_str ++ " '{s}', file not found.", .{file_name}),
+        else => logger.err("Error " ++ context_str ++ " '{s}'.", .{file_name}),
     }
     return;
 }
