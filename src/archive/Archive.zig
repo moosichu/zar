@@ -116,6 +116,8 @@ pub const ParseError = error{
     InvalidCharacter,
 };
 
+pub const InsertError = error{};
+
 pub const CriticalError = error{
     OutOfMemory,
     TODO,
@@ -273,7 +275,6 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
 }
 
 pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) @TypeOf(err_result) {
-    // TODO: at some point switch on the errors to show more info!
     _ = err_result catch |err| printFileIoError(context, file_name, err);
     return err_result;
 }
@@ -759,7 +760,7 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     }
 }
 
-pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize, file: fs.File, file_offset: u32) !void {
+pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize, file: fs.File, file_offset: u32) (CriticalError || IoError)!void {
     // TODO: make this read directly from the file contents buffer!
 
     // Get the file magic
@@ -789,7 +790,8 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
             // TODO: Do not use builtin.target like this, be more flexible!
             elf_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
                 error.NotObject => break :blk,
-                else => |e| return e,
+                error.OutOfMemory => return error.OutOfMemory,
+                error.TODOBigEndianSupport, error.TODOElf32bitSupport, error.EndOfStream => return error.TODO,
             };
 
             for (elf_file.symtab.items) |sym| {
@@ -840,7 +842,8 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 // TODO: Should be based on target cpu arch!
                 macho_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
                     error.NotObject => break :blk,
-                    else => |e| return e,
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.UnsupportedCpuArchitecture, error.EndOfStream => return error.TODO,
                 };
 
                 for (macho_file.symtab.items) |sym| {
@@ -876,7 +879,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     }
 }
 
-pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) !void {
+pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) (InsertError || IoError || CriticalError)!void {
     const tracy = trace(@src());
     defer tracy.end();
 
