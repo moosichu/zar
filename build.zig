@@ -30,6 +30,9 @@ pub fn build(b: *std.build.Builder) void {
     tests.addOptions("build_options", exe_options);
     tests_exe.addOptions("build_options", exe_options);
 
+    const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
+    exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
+
     {
         const tracy = b.option([]const u8, "tracy", "Enable Tracy integration. Supply path to Tracy source");
         const tracy_callstack = b.option(bool, "tracy-callstack", "Include callstack information with Tracy data. Does nothing if -Dtracy is not provided") orelse false;
