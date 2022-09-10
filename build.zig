@@ -1,10 +1,13 @@
 const std = @import("std");
+const mem = std.mem;
 
 fn addZld(obj: *std.build.LibExeObjStep) void {
     obj.addPackagePath("Zld", "zld/src/Zld.zig");
 }
 
-pub fn build(b: *std.build.Builder) void {
+const zar_version = std.builtin.Version{ .major = 0, .minor = 0, .patch = 0 };
+
+pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -29,9 +32,66 @@ pub fn build(b: *std.build.Builder) void {
     exe.addOptions("build_options", exe_options);
     tests.addOptions("build_options", exe_options);
     tests_exe.addOptions("build_options", exe_options);
+    {
+        const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
+        exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
+    }
 
-    const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
-    exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
+    // Taken from https://github.com/ziglang/zig/blob/master/build.zig, extract
+    // the git commit hash to get an actual version.
+    const version = v: {
+        if (!std.process.can_spawn) {
+            std.debug.print("error: version info cannot be retrieved from git. Zig version must be provided using -Dversion-string\n", .{});
+            std.process.exit(1);
+        }
+        const version_string = b.fmt("{d}.{d}.{d}", .{ zar_version.major, zar_version.minor, zar_version.patch });
+        var code: u8 = undefined;
+        const git_describe_untrimmed = b.execAllowFail(&[_][]const u8{
+            "git", "-C", b.build_root, "describe", "--match", "*.*.*", "--tags",
+        }, &code, .Ignore) catch |e| {
+            break :v version_string;
+        };
+        const git_describe = mem.trim(u8, git_describe_untrimmed, " \n\r");
+
+        switch (mem.count(u8, git_describe, "-")) {
+            0 => {
+                // Tagged release version (e.g. 0.9.0).
+                if (!mem.eql(u8, git_describe, version_string)) {
+                    std.debug.print("Zig version '{s}' does not match Git tag '{s}'\n", .{ version_string, git_describe });
+                    std.process.exit(1);
+                }
+                break :v version_string;
+            },
+            2 => {
+                // Untagged development build (e.g. 0.9.0-dev.2025+ecf0050a9).
+                var it = mem.split(u8, git_describe, "-");
+                const tagged_ancestor = it.first();
+                const commit_height = it.next().?;
+                const commit_id = it.next().?;
+
+                const ancestor_ver = try std.builtin.Version.parse(tagged_ancestor);
+                if (zar_version.order(ancestor_ver) != .gt) {
+                    std.debug.print("Zig version '{}' must be greater than tagged ancestor '{}'\n", .{ zar_version, ancestor_ver });
+                    std.process.exit(1);
+                }
+
+                // Check that the commit hash is prefixed with a 'g' (a Git convention).
+                if (commit_id.len < 1 or commit_id[0] != 'g') {
+                    std.debug.print("Unexpected `git describe` output: {s}\n", .{git_describe});
+                    break :v version_string;
+                }
+
+                // The version is reformatted in accordance with the https://semver.org specification.
+                break :v b.fmt("{s}-dev.{s}+{s}", .{ version_string, commit_height, commit_id[1..] });
+            },
+            else => {
+                std.debug.print("Unexpected `git describe` output: {s}\n", .{git_describe});
+                break :v version_string;
+            },
+        }
+    };
+
+    exe_options.addOption([]const u8, "version", version);
 
     {
         const tracy = b.option([]const u8, "tracy", "Enable Tracy integration. Supply path to Tracy source");

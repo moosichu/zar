@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const trace = @import("tracy.zig").trace;
 const fs = std.fs;
 const io = std.io;
@@ -75,7 +76,7 @@ pub const ranlib_overview =
 pub const zar_error_prefix = zar_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
 pub const ranlib_error_prefix = ranlib_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
 
-const version = "0.0.0";
+const version = build_options.version;
 
 const version_details =
     \\zar {s} (https://github.com/moosichu/zar):
