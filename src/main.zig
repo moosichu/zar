@@ -98,17 +98,17 @@ pub const Mode = enum { ar, ranlib };
 
 pub var mode: Mode = .ar;
 
-fn printHelp(stdout: fs.File.Writer) !void {
-    switch (mode) {
-        .ar => try stdout.print(zar_overview, .{}),
-        .ranlib => try stdout.print(ranlib_overview, .{}),
-    }
+fn printHelp(stdout: fs.File.Writer) void {
+    _ = switch (mode) {
+        .ar => stdout.print(zar_overview, .{}),
+        .ranlib => stdout.print(ranlib_overview, .{}),
+    } catch {};
 }
 
-fn printVersion(stdout: fs.File.Writer) !void {
+fn printVersion(stdout: fs.File.Writer) void {
     const target = builtin.target;
     const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
-    try stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
+    stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
 }
 
 // For the release standalone program, we just want to display concise errors
@@ -320,10 +320,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 arg_index = arg_index + 1;
                 continue;
             } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
-                try printHelp(stdout);
+                printHelp(stdout);
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
-                try printVersion(stdout);
+                printVersion(stdout);
                 return;
             }
         }
@@ -415,12 +415,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.help) {
-        try printHelp(stdout);
+        printHelp(stdout);
         return;
     }
 
     if (modifiers.show_version) {
-        try printVersion(stdout);
+        printVersion(stdout);
         return;
     }
 
@@ -472,7 +472,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
-                try stdout.print("{s}\n", .{parsed_file.name});
+                stdout.print("{s}\n", .{parsed_file.name}) catch {};
             }
         },
         .print_contents => {
@@ -482,7 +482,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
             try archive.parse(allocator);
             for (archive.files.items) |parsed_file| {
-                try parsed_file.contents.write(stdout, stderr);
+                parsed_file.contents.write(stdout, stderr) catch {};
             }
         },
         .print_symbols => {
@@ -494,12 +494,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             for (archive.symbols.items) |symbol| {
                 if (modifiers.verbose) {
                     if (symbol.file_index == Archive.invalid_file_index) {
-                        try stdout.print("?: {s}\n", .{symbol.name});
+                        stdout.print("?: {s}\n", .{symbol.name}) catch {};
                     } else {
-                        try stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name });
+                        stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name }) catch {};
                     }
                 } else {
-                    try stdout.print("{s}\n", .{symbol.name});
+                    stdout.print("{s}\n", .{symbol.name}) catch {};
                 }
             }
         },
