@@ -73,8 +73,11 @@ pub const ranlib_overview =
     \\
 ;
 
-pub const zar_error_prefix = zar_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
-pub const ranlib_error_prefix = ranlib_overview ++ "\n\x1B[1;31merror\x1B[0m: ";
+pub const zar_error_prefix = "\x1B[1;31merror\x1B[0m: ";
+pub const ranlib_error_prefix = "\x1B[1;31merror\x1B[0m: ";
+
+pub const full_zar_error_prefix = zar_overview ++ "\n" ++ zar_error_prefix;
+pub const full_ranlib_error_prefix = ranlib_overview ++ "\n" ++ ranlib_error_prefix;
 
 const version = build_options.version;
 
@@ -93,15 +96,16 @@ pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
 
 pub const Mode = enum { ar, ranlib };
 
-fn printHelp(stdout: fs.File.Writer, mode: Mode) !void {
+pub var mode: Mode = .ar;
+
+fn printHelp(stdout: fs.File.Writer) !void {
     switch (mode) {
         .ar => try stdout.print(zar_overview, .{}),
         .ranlib => try stdout.print(ranlib_overview, .{}),
     }
 }
 
-fn printVersion(stdout: fs.File.Writer, mode: Mode) !void {
-    // TODO: calculate build, archive type & host!
+fn printVersion(stdout: fs.File.Writer) !void {
     const target = builtin.target;
     const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
     try stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) });
@@ -126,24 +130,35 @@ pub fn log(
     if (full_logging) {
         nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
     } else {
-        nosuspend stderr.print(format ++ "\n", args) catch return;
+        if (mode == .ranlib) {
+            nosuspend stderr.print(ranlib_error_prefix ++ format ++ "\n", args) catch return;
+        } else {
+            nosuspend stderr.print(zar_error_prefix ++ format ++ "\n", args) catch return;
+        }
     }
 }
 
 // We want to show program zar_overview if invalid argument combination is passed
 // through to the program be the user, we do this often enough that it's worth
 // having a procedure for it.
-fn printArgumentError(comptime errorString: []const u8, args: anytype, mode: Mode) void {
-    if (mode == .ranlib) {
-        logger.err(ranlib_error_prefix ++ errorString, args);
+fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
+    if (full_logging) {
+        logger.err(errorString, args);
     } else {
-        logger.err(zar_error_prefix ++ errorString, args);
+        std.debug.getStderrMutex().lock();
+        defer std.debug.getStderrMutex().unlock();
+        const stderr = std.io.getStdErr().writer();
+        if (mode == .ranlib) {
+            nosuspend stderr.print(full_ranlib_error_prefix ++ errorString ++ "\n", args) catch return;
+        } else {
+            nosuspend stderr.print(full_zar_error_prefix ++ errorString ++ "\n", args) catch return;
+        }
     }
 }
 
-fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8, mode: Mode) bool {
+fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8) bool {
     if (index >= args.len) {
-        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{}, mode);
+        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
         return false;
     }
     return true;
@@ -167,7 +182,7 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
     return open_file_handle;
 }
 
-fn processModifier(modifier_char: u8, mode: Mode, modifiers: *Archive.Modifiers) bool {
+fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
     switch (mode) {
         .ar => switch (modifier_char) {
             'c' => modifiers.create = true,
@@ -183,9 +198,9 @@ fn processModifier(modifier_char: u8, mode: Mode, modifiers: *Archive.Modifiers)
             'b', 'i' => modifiers.move_setting = .after,
             'V' => modifiers.show_version = true,
             'h' => modifiers.help = true,
-            // TODO: handle other modifiers!
+            // TODO: Ensure all modifiers we need to handle are handled!
             else => {
-                printArgumentError("'{c}' is not a valid modifier.", .{modifier_char}, mode);
+                printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
                 return false;
             },
         },
@@ -204,7 +219,7 @@ fn processModifier(modifier_char: u8, mode: Mode, modifiers: *Archive.Modifiers)
                 modifiers.help = true;
             },
             else => {
-                printArgumentError("'{c}' is not a valid option.", .{modifier_char}, mode);
+                printArgumentError("'{c}' is not a valid option.", .{modifier_char});
                 return false;
             },
         },
@@ -237,7 +252,7 @@ pub fn main() anyerror!void {
     };
 }
 
-pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) anyerror!void {
+pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
 
@@ -250,7 +265,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Check if we are in ranlib mode!
-    const mode: Mode = mode: {
+    mode = mode: {
         if (arg_index < args.len) {
             if (mem.eql(u8, "ranlib", args[arg_index])) {
                 arg_index = arg_index + 1;
@@ -266,26 +281,24 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     // in these cases.
     var keep_processing_current_option = true;
     while (keep_processing_current_option) {
-        if (!checkArgsBounds(args, arg_index, "operation", mode)) {
+        if (!checkArgsBounds(args, arg_index, "operation")) {
             return;
         }
 
         keep_processing_current_option = false;
         var current_arg = args[arg_index];
         {
-            // TODO: Make sure an arg doesn't show up twice!
             const format_string_prefix = "--format=";
             const plugin_string_prefix = "--plugin=";
             const help_string = "--help";
             const help_shortcut = "-h";
             const version_string = "--version";
             if (mode == .ar and mem.startsWith(u8, current_arg, format_string_prefix)) {
-                // TODO: Handle format option!
                 keep_processing_current_option = true;
 
                 const format_string = current_arg[format_string_prefix.len..];
                 if (mem.eql(u8, format_string, "default")) {
-                    // do nothing
+                    archive_type = Archive.ArchiveType.ambiguous;
                 } else if (mem.eql(u8, format_string, "bsd")) {
                     archive_type = .bsd;
                 } else if (mem.eql(u8, format_string, "darwin")) {
@@ -293,8 +306,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 } else if (mem.eql(u8, format_string, "gnu")) {
                     archive_type = .gnu;
                 } else {
-                    // TODO: do an actual error here!
-                    return error.TODO;
+                    logger.err("Invalid format {s}", .{format_string});
+                    return Archive.HandledError.UnknownFormat;
                 }
                 arg_index = arg_index + 1;
                 continue;
@@ -307,10 +320,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 arg_index = arg_index + 1;
                 continue;
             } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
-                try printHelp(stdout, mode);
+                try printHelp(stdout);
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
-                try printVersion(stdout, mode);
+                try printVersion(stdout);
                 return;
             }
         }
@@ -323,7 +336,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 var arg_slice = args[arg_index][0..];
                 if (arg_slice[0] == '-') {
                     if (arg_slice.len == 1) {
-                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{}, mode);
+                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{});
                         return;
                     }
 
@@ -332,7 +345,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             }
             break :operation Archive.Operation.ranlib;
         } else {
-            if (!checkArgsBounds(args, arg_index, "operation", mode)) {
+            if (!checkArgsBounds(args, arg_index, "operation")) {
                 return;
             }
             const operation_slice = slice: {
@@ -340,7 +353,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 var arg_slice = args[arg_index][0..];
                 if (arg_slice[0] == '-') {
                     if (arg_slice.len == 1) {
-                        printArgumentError("A valid operation must be provided - only hyphen found.", .{}, mode);
+                        printArgumentError("A valid operation must be provided - only hyphen found.", .{});
                         return;
                     }
 
@@ -364,7 +377,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
                 'x' => break :operation Archive.Operation.extract,
                 'S' => break :operation Archive.Operation.print_symbols,
                 else => {
-                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]}, mode);
+                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
                     return;
                 },
             }
@@ -382,7 +395,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
             break;
         }
         for (modifier_slice) |modifier_char| {
-            if (!processModifier(modifier_char, mode, &modifiers)) {
+            if (!processModifier(modifier_char, &modifiers)) {
                 return;
             }
         }
@@ -394,7 +407,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
         var arg_slice = args[arg_index][0..];
         if (arg_slice[0] != '-') break;
         if (arg_slice.len == 1) {
-            printArgumentError("A valid modifer must be provided - only hyphen found.", .{}, mode);
+            printArgumentError("A valid modifer must be provided - only hyphen found.", .{});
             return;
         }
 
@@ -402,16 +415,16 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     }
 
     if (modifiers.help) {
-        try printHelp(stdout, mode);
+        try printHelp(stdout);
         return;
     }
 
     if (modifiers.show_version) {
-        try printVersion(stdout, mode);
+        try printVersion(stdout);
         return;
     }
 
-    if (!checkArgsBounds(args, arg_index, "archive", mode)) {
+    if (!checkArgsBounds(args, arg_index, "archive")) {
         return;
     }
 
@@ -518,11 +531,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) an
     }
 }
 
-// TODO: systemically work through all errors, put them in an Archive error
-// set so that we know they print appropriate error messages, make this NOT
-// return any error type, and know we have a robust main program alongside
-// a usable API that returns a well-defined set of errors.
-fn handleArchiveError(err: anyerror) !void {
+fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !void {
     {
         // we can ignore these errors because we log context specific
         // information about them at the time that they are thrown.
@@ -534,17 +543,15 @@ fn handleArchiveError(err: anyerror) !void {
         }
     }
 
-    switch (err) {
-        // These are errors which already have appropraite log messages printed
-        error.NotArchive => logger.err("Provided file is not an archive.", .{}),
-        error.MalformedArchive, error.Overflow, error.InvalidCharacter => logger.err("Malformed archive provided.", .{}),
-        error.OutOfMemory => logger.err("Program ran out of memory.", .{}),
+    const unhandled_err = @errSetCast(Archive.UnhandledError, err);
 
-        // TODO: ignore runtime errors as they aren't needed.
-        // we bubble-up other errors as they are currently unhandled
-        // TODO: handle these (either at top-level or in parsing method).
-        // or have a bug reporting system (or make them not possible by explicitly
-        // covering the union of all errors.
-        else => return err,
+    switch (unhandled_err) {
+        // These are errors which already have appropraite log messages printed
+        Archive.ParseError.NotArchive => logger.err("Provided file is not an archive.", .{}),
+        Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => logger.err("Malformed archive provided.", .{}),
+        error.OutOfMemory => logger.err("Program ran out of memory.", .{}),
+        error.TODO => logger.err("Unimplemented feature encountered (TODO error)", .{}),
     }
+
+    if (debug_errors) return err;
 }

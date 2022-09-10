@@ -107,8 +107,10 @@ pub const Operation = enum {
 // messages at the point they are created, whereas unhandled errors do
 // not so the caller will need to print appropriate error messages
 // themselves (if needed at all).
-pub const UnhandledError = ParseError || CriticalError;
-pub const HandledError = HandledIoError;
+pub const UnhandledError = CreateError || ParseError || InsertError || DeleteError || FinalizeError || CriticalError;
+pub const HandledError = HandledIoError || error{
+    UnknownFormat,
+};
 
 // We can set this to true just to make Handled errors are actually handled at
 // comptime!
