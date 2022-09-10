@@ -56,3 +56,21 @@ jobs:
       - name: Build Redis macOS
         run: make CC="zig cc -target x86_64-macos" CXX="zig c++ -target x86_64-macos" AR="${GITHUB_WORKSPACE}/zig-out/bin/zar" RANLIB="zig ranlib" uname_S="Darwin" uname_M="x86_64" USE_JEMALLOC=no USE_SYSTEMD=no
         working-directory: redis
+  test_io_errors_handled:
+    name: Test handled errors are actually handled
+    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+        with:
+          submodules: recursive
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v1
+        with:
+          version: master
+      - name: Build
+        run: zig build -Dtest-errors-handled=true

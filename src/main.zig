@@ -160,8 +160,7 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
             return create_file_handle;
         },
         else => {
-            Archive.printFileIoError(.opening, archive_path, err);
-            return err;
+            return Archive.printFileIoError(.opening, archive_path, err);
         },
     };
     return open_file_handle;
