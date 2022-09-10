@@ -5,7 +5,7 @@ fn addZld(obj: *std.build.LibExeObjStep) void {
     obj.addPackagePath("Zld", "zld/src/Zld.zig");
 }
 
-const zar_version = std.builtin.Version{ .major = 0, .minor = 0, .patch = 0 };
+const zar_version = std.builtin.Version{ .major = 0, .minor = 0, .patch = 1 };
 
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
@@ -48,7 +48,7 @@ pub fn build(b: *std.build.Builder) !void {
         var code: u8 = undefined;
         const git_describe_untrimmed = b.execAllowFail(&[_][]const u8{
             "git", "-C", b.build_root, "describe", "--match", "*.*.*", "--tags",
-        }, &code, .Ignore) catch |e| {
+        }, &code, .Ignore) catch {
             break :v version_string;
         };
         const git_describe = mem.trim(u8, git_describe_untrimmed, " \n\r");
