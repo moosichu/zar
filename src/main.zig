@@ -15,6 +15,7 @@ pub const zar_overview =
     \\
     \\Usage:
     \\  zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
+    \\  zar -M [<mri-script]
     \\
     \\Description:
     \\  The Zig Archiver is the self-hosted implementation of the ar utility
@@ -126,13 +127,13 @@ pub const full_logging = builtin.mode == .Debug;
 pub const debug_errors = builtin.mode == .Debug;
 pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
 
-pub const Mode = enum { ar, ranlib };
+pub const Mode = enum { ar, ranlib, mri };
 
 pub var mode: Mode = .ar;
 
 fn printHelp(stdout: fs.File.Writer) void {
     _ = switch (mode) {
-        .ar => stdout.print(zar_overview, .{}),
+        .ar, .mri => stdout.print(zar_overview, .{}),
         .ranlib => stdout.print(ranlib_overview, .{}),
     } catch {};
 }
@@ -269,6 +270,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
                 return false;
             },
         },
+        .mri => unreachable,
     }
     return true;
 }
@@ -316,10 +318,43 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             if (mem.eql(u8, "ranlib", args[arg_index])) {
                 arg_index = arg_index + 1;
                 break :mode .ranlib;
+            } else if (mem.eql(u8, "-M", args[arg_index])) {
+                arg_index = arg_index + 1;
+
+                break :mode .mri;
             }
         }
         break :mode .ar;
     };
+
+    if (mode == .mri) {
+        if (arg_index >= args.len) {
+            logger.err("Cannot add any options after -M", .{});
+        }
+        const stdin = io.getStdIn().reader();
+        const buffered_reader = io.bufferedReader(stdin);
+
+        // TODO: verify max path sizes on different operating systems and just
+        // comfortably allocate that!
+        const mri_parser_buffer_size = 8192;
+        const mri_parser = try allocator.create(Archive.MriParser(@TypeOf(buffered_reader), mri_parser_buffer_size));
+        defer allocator.destroy(mri_parser);
+        mri_parser.* = Archive.MriParser(@TypeOf(buffered_reader), mri_parser_buffer_size).init(buffered_reader);
+        mri_parser.execute() catch {
+            // try err;
+        };
+
+        //  catch |err| {
+        //     logger.err("Unexpected error reading from stdin {}.", .{err});
+        //     if (Archive.test_errors_handled) {
+        //         return error.Handled;
+        //     }
+        //     return err;
+        // };
+        // defer mri_parser.deinit(allocator);
+        // try mri_parser.execute(allocator, stdout, stderr);
+        return;
+    }
 
     var modifiers: Archive.Modifiers = .{};
     var operation: Archive.Operation = if (mode == .ranlib) .ranlib else .undefined;

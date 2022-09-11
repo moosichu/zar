@@ -1457,144 +1457,265 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
     }
 }
 
-pub const MRIParser = struct {
-    script: []const u8,
-    archive: ?Archive,
-    file_name: ?[]const u8,
-
-    const CommandType = enum {
-        open,
-        create,
-        createthin,
-        addmod,
-        list,
-        delete,
-        extract,
+pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type {
+    const Command = union(enum) {
+        // open: struct { archive: []const u8 },
+        create: struct { archive: []const u8 },
+        createthin: struct { archive: []const u8 },
+        addlib: struct { archive: []const u8 },
+        addmod: struct { file: []const u8 },
+        // list,
+        delete: struct { file: []const u8 },
+        // extract,
         save,
-        clear,
+        // clear,
         end,
+        // no more commands left
+        none,
     };
+    // const State = enum {
+    //     root,
+    //     create_or_createthin,
+    // };
+    const CommandReader = struct {
+        reader: Reader,
+        command_process_buffer: [buffer_size]u8 = undefined,
+        buffer_index: u16 = 0,
+        command_process_buffer_index: u16 = 0,
 
-    const Self = @This();
+        const Self = @This();
 
-    pub fn init(allocator: Allocator, file: fs.File) !Self {
-        const self = Self{
-            .script = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
-            .archive = null,
-            .file_name = null,
-        };
-
-        return self;
-    }
-
-    // Returns the next token
-    fn getToken(iter: *mem.SplitIterator(u8)) ?[]const u8 {
-        while (iter.next()) |tok| {
-            if (mem.startsWith(u8, tok, "*")) break;
-            if (mem.startsWith(u8, tok, ";")) break;
-            return tok;
+        fn getNextCharacter(self: *Self) !u8 {
+            var buf: [1]u8 = undefined;
+            const chars_returned = self.reader.read(&buf) catch |e| {
+                logger.err("Unexpected error reading MRI script {}", .{e});
+                if (test_errors_handled) return error.Handled;
+                return e;
+            };
+            if (chars_returned == 1) return buf[0];
+            return error.EndOfStream;
         }
-        return null;
-    }
 
-    // Returns a slice of tokens
-    fn getTokenLine(allocator: Allocator, iter: *mem.SplitIterator(u8)) ![]const []const u8 {
-        var list = std.ArrayList([]const u8).init(allocator);
-        errdefer list.deinit();
-
-        while (getToken(iter)) |tok| {
-            try list.append(tok);
+        fn getNextCommandCharacter(self: *Self) !u8 {
+            const c = try self.getNextCharacter();
+            return std.ascii.toLower(c);
         }
-        return list.toOwnedSlice();
-    }
 
-    pub fn execute(self: *Self, allocator: Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
-        // Split the file into lines
-        var parser = mem.split(u8, self.script, "\n");
+        fn getCommandParameter(self: *Self) ![]u8 {
+            // TODO: escape things properly or something!
+            var buffer_index: u16 = 0;
+            while (true) {
+                std.debug.assert(buffer_index < buffer_size);
+                const c = self.getNextCharacter() catch |e| switch (e) {
+                    error.EndOfStream => {
+                        if (buffer_index == 0) {
+                            return error.EndOfStream;
+                        } else {
+                            return self.command_process_buffer[0..buffer_index];
+                        }
+                    },
+                    else => |e_else| return e_else,
+                };
+                if (std.ascii.isSpace(c)) {
+                    if (buffer_index == 0) continue;
+                    return self.command_process_buffer[0..buffer_index];
+                }
 
-        while (parser.next()) |line| {
-            // Split the line by spaces
-            var line_parser = mem.split(u8, line, " ");
+                self.command_process_buffer[buffer_index] = c;
+                buffer_index += 1;
+            }
+        }
 
-            if (getToken(&line_parser)) |tok| {
-                var command_name = try allocator.dupe(u8, tok);
-                defer allocator.free(command_name);
+        pub fn getNextCommand(self: *Self) (HandledError || UnhandledError)!Command {
+            while (true) {
+                var c = self.getNextCommandCharacter() catch |e| switch (e) {
+                    error.EndOfStream => break,
+                    else => |e_else| return e_else,
+                };
+                if (std.ascii.isSpace(c)) continue;
 
-                _ = std.ascii.lowerString(command_name, tok);
+                switch (c) {
+                    'c' => {
+                        for (@tagName(Command.createthin)[1..]) |createthin_char, createthin_char_index| {
+                            if (createthin_char_index + 1 < @tagName(Command.create).len) {
+                                std.debug.assert(@tagName(Command.create)[1 + createthin_char_index] == createthin_char);
+                            }
 
-                if (std.meta.stringToEnum(CommandType, command_name)) |command| {
-                    if (self.archive) |archive| {
-                        switch (command) {
-                            .addmod => {
-                                const file_names = try getTokenLine(allocator, &line_parser);
-                                defer allocator.free(file_names);
-
-                                try self.archive.?.insertFiles(allocator, file_names);
-                            },
-                            .list => {
-                                // TODO: verbose output
-                                for (archive.files.items) |parsed_file| {
-                                    try stdout.print("{s}\n", .{parsed_file.name});
+                            c = self.getNextCommandCharacter() catch |e| switch (e) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+                            if (createthin_char_index + 1 == @tagName(Command.create).len) {
+                                if (std.ascii.isSpace(c)) {
+                                    // we have a create command!
+                                    const archive = self.getCommandParameter() catch |e| switch (e) {
+                                        error.EndOfStream => return error.TODO,
+                                        else => |e_else| return e_else,
+                                    };
+                                    return .{ .create = .{ .archive = archive } };
                                 }
-                            },
-                            .delete => {
-                                const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archive.?.deleteFiles(file_names);
-                            },
-                            .extract => {
-                                const file_names = try getTokenLine(allocator, &line_parser);
-                                try self.archive.?.extract(file_names);
-                            },
-                            .save => {
-                                try self.archive.?.finalize(allocator);
-                            },
-                            .clear => {
-                                // This is a bit of a hack but its reliable.
-                                // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
-                                const file = try handleFileIoError(.opening, self.file_name, self.dir.openFile(self.file_name.?, .{ .mode = .read_write }));
-                                self.archive = Archive.create(file, self.file_name.?);
+                            }
 
-                                try self.archive.?.parse(allocator, stderr);
-                            },
-                            .end => return,
-                            else => {
-                                try stderr.print(
-                                    "Archive `{s}` is currently open.\nThe command `{s}` can only be executed when no current archive is active.\n",
-                                    .{ self.file_name.?, command_name },
-                                );
-                                return error.ArchiveAlreadyOpen;
-                            },
+                            if (createthin_char == c) {
+                                // all is good!
+                            } else {
+                                // error - bad command!
+                                return error.TODO;
+                            }
                         }
-                    } else {
-                        switch (command) {
-                            .open => {
-                                const file_name = getToken(&line_parser).?;
 
-                                const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_write }));
-                                self.archive = Archive.create(file, file_name);
-                                self.file_name = file_name;
+                        c = self.getNextCommandCharacter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
 
-                                try self.archive.?.parse(allocator, stderr);
-                            },
-                            .create, .createthin => {
-                                // TODO: Thin archives creation
-                                const file_name = getToken(&line_parser).?;
-
-                                const file = try self.dir.createFile(file_name, .{ .read = true });
-                                self.archive = Archive.create(file, file_name);
-                                self.file_name = file_name;
-
-                                try self.archive.?.parse(allocator, stderr);
-                            },
-                            .end => return,
-                            else => {
-                                try stderr.print("No currently active archive found.\nThe command `{s}` can only be executed when there is an opened archive.\n", .{command_name});
-                                return error.NoCurrentArchive;
-                            },
+                        if (!std.ascii.isSpace(c)) {
+                            // error - bad command!
+                            return error.TODO;
                         }
-                    }
+
+                        const archive = self.getCommandParameter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
+                        return .{ .createthin = .{ .archive = archive } };
+                    },
+                    'a' => {
+                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
+                            c = self.getNextCharacter() catch |e| switch (e) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+
+                            if (addmod_char == c) {
+                                // all is good!
+                            } else {
+                                // error - bad command!
+                                return error.TODO;
+                            }
+                        }
+
+                        c = self.getNextCommandCharacter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
+                        if (!std.ascii.isSpace(c)) {
+                            // error - bad command!
+                            return error.TODO;
+                        }
+
+                        const file = self.getCommandParameter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
+                        return .{ .addmod = .{ .file = file } };
+                    },
+                    'd' => {
+                        for (@tagName(Command.delete)[1..]) |delete_char| {
+                            c = self.getNextCharacter() catch |e| switch (e) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+
+                            if (delete_char == c) {
+                                // all is good!
+                            } else {
+                                // error - bad command!
+                                return error.TODO;
+                            }
+                        }
+
+                        c = self.getNextCommandCharacter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
+                        if (!std.ascii.isSpace(c)) {
+                            // error - bad command!
+                            return error.TODO;
+                        }
+
+                        const file = self.getCommandParameter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            else => |e_else| return e_else,
+                        };
+                        return .{ .delete = .{ .file = file } };
+                    },
+                    's' => {
+                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
+                            c = self.getNextCharacter() catch |e| switch (e) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+
+                            if (addmod_char == c) {
+                                // all is good!
+                            } else {
+                                // error - bad command!
+                                return error.TODO;
+                            }
+                        }
+
+                        return .save;
+                    },
+                    'e' => {
+                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
+                            c = self.getNextCharacter() catch |e| switch (e) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+
+                            if (addmod_char == c) {
+                                // all is good!
+                            } else {
+                                // error - bad command!
+                                return error.TODO;
+                            }
+                        }
+
+                        return .end;
+                    },
+                    else => {
+                        // error - bad command!
+                        return error.TODO;
+                    },
+                }
+            }
+            return .end;
+        }
+    };
+    return struct {
+        command_reader: CommandReader,
+        archive: ?Archive,
+        file_name: ?[]const u8,
+
+        const Self = @This();
+
+        pub fn init(reader: Reader) Self {
+            const self = Self{
+                .command_reader = .{ .reader = reader },
+                .archive = null,
+                .file_name = null,
+            };
+
+            return self;
+        }
+
+        pub fn execute(self: *Self) (HandledError || UnhandledError)!void {
+            while (true) {
+                const command = try self.command_reader.getNextCommand();
+                switch (command) {
+                    .create => |create| {
+                        _ = create.archive;
+                    },
+                    .createthin => {},
+                    .addlib => {},
+                    .addmod => {},
+                    .delete => {},
+                    .save => {},
+                    .end => {},
+                    .none => {},
                 }
             }
         }
-    }
-};
+    };
+}
