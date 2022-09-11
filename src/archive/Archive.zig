@@ -100,6 +100,7 @@ pub const Operation = enum {
     print_names,
     extract,
     print_symbols,
+    undefined,
 };
 
 // We seperate errors into two classes, "handled" and "unhandled".

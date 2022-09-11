@@ -317,18 +317,23 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     };
 
     var modifiers: Archive.Modifiers = .{};
+    var operation: Archive.Operation = if (mode == .ranlib) .ranlib else .undefined;
+    var found_archive_path: ?[]const u8 = null;
+    var files = std.ArrayList([]const u8).init(allocator);
+    defer files.deinit();
+    while (arg_index < args.len) {
+        defer arg_index += 1;
 
-    // Process Options First
-    // TODO: based on observed behaviour of ranlib and ar, this order isn't actually
-    // fixed. Need to write some tests to fuzz these and then match llvm's behaviour
-    // in these cases.
-    var keep_processing_current_option = true;
-    while (keep_processing_current_option) {
-        if (!checkArgsBounds(args, arg_index, "operation")) {
-            return;
+        if (operation == .undefined) {
+            if (!checkArgsBounds(args, arg_index, "operation")) {
+                return;
+            }
+        } else {
+            if (arg_index >= args.len) {
+                break;
+            }
         }
 
-        keep_processing_current_option = false;
         var current_arg = args[arg_index];
         {
             const format_string_prefix = "--format=";
@@ -337,8 +342,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const version_string = "--version";
             const thin_string = "--thin";
             if (mode == .ar and mem.startsWith(u8, current_arg, format_string_prefix)) {
-                keep_processing_current_option = true;
-
                 const format_string = current_arg[format_string_prefix.len..];
                 if (mem.eql(u8, format_string, "default")) {
                     archive_type = Archive.ArchiveType.ambiguous;
@@ -352,20 +355,14 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                     logger.err("Invalid format {s}", .{format_string});
                     return Archive.HandledError.UnknownFormat;
                 }
-                arg_index = arg_index + 1;
                 continue;
             } else if (mode == .ar and mem.startsWith(u8, current_arg, plugin_string_prefix)) {
-                keep_processing_current_option = true;
-                arg_index = arg_index + 1;
+                // Ignored for compatability!
                 continue;
             } else if (mode == .ar and mem.eql(u8, current_arg, thin_string)) {
                 modifiers.thin_archives = true;
-                keep_processing_current_option = true;
-                arg_index = arg_index + 1;
                 continue;
-            } else if (args[arg_index].len == 0) {
-                keep_processing_current_option = true;
-                arg_index = arg_index + 1;
+            } else if (current_arg.len == 0) {
                 continue;
             } else if (mem.eql(u8, current_arg, help_string)) {
                 printHelp(stdout);
@@ -375,90 +372,64 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 return;
             }
         }
-    }
 
-    var modifier_slice: []const u8 = "";
-    const operation = operation: {
-        if (mode == .ranlib) {
-            if (arg_index < args.len) {
-                var arg_slice = args[arg_index][0..];
-                if (arg_slice[0] == '-') {
-                    if (arg_slice.len == 1) {
-                        printArgumentError("A valid modifier must be provided - only hyphen found.", .{});
-                        return;
-                    }
-
-                    modifier_slice = arg_slice[1..];
-                }
-            }
-            break :operation Archive.Operation.ranlib;
-        } else {
-            if (!checkArgsBounds(args, arg_index, "operation")) {
-                return;
-            }
-            const operation_slice = slice: {
-                // the operation may start with a hyphen - so slice it!
-                var arg_slice = args[arg_index][0..];
-                if (arg_slice[0] == '-') {
-                    if (arg_slice.len == 1) {
-                        printArgumentError("A valid operation must be provided - only hyphen found.", .{});
-                        return;
-                    }
-
-                    arg_slice = arg_slice[1..arg_slice.len];
-                }
-
-                break :slice arg_slice;
-            };
-
-            modifier_slice = operation_slice[1..];
-
-            // Process Operation
-            switch (operation_slice[0]) {
-                'r' => break :operation Archive.Operation.insert,
-                'd' => break :operation Archive.Operation.delete,
-                'm' => break :operation Archive.Operation.move,
-                'p' => break :operation Archive.Operation.print_contents,
-                'q' => break :operation Archive.Operation.quick_append,
-                's' => break :operation Archive.Operation.ranlib,
-                't' => break :operation Archive.Operation.print_names,
-                'x' => break :operation Archive.Operation.extract,
-                'S' => break :operation Archive.Operation.print_symbols,
-                else => {
-                    printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
+        var modifier_slice: []const u8 = "";
+        if (operation == .undefined) {
+            operation = operation: {
+                if (!checkArgsBounds(args, arg_index, "operation")) {
                     return;
-                },
-            }
-        }
-    };
+                }
+                const operation_slice = slice: {
+                    // the operation may start with a hyphen - so slice it!
+                    var arg_slice = current_arg[0..];
+                    if (arg_slice[0] == '-') {
+                        if (arg_slice.len == 1) {
+                            printArgumentError("A valid operation must be provided - only hyphen found.", .{});
+                            return;
+                        }
 
-    while (true) {
-        if (modifier_slice.len == 0) {
-            // operation argument didn't have any modifiers,
-            // so incremement arg index if we are in ar land
-            if (mode == .ar) {
-                arg_index = arg_index + 1;
+                        arg_slice = arg_slice[1..];
+                    }
+
+                    break :slice arg_slice;
+                };
+
+                modifier_slice = operation_slice[1..];
+
+                // Process Operation
+                switch (operation_slice[0]) {
+                    'r' => break :operation .insert,
+                    'd' => break :operation .delete,
+                    'm' => break :operation .move,
+                    'p' => break :operation .print_contents,
+                    'q' => break :operation .quick_append,
+                    's' => break :operation .ranlib,
+                    't' => break :operation .print_names,
+                    'x' => break :operation .extract,
+                    'S' => break :operation .print_symbols,
+                    else => {
+                        printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
+                        return;
+                    },
+                }
+            };
+        } else if (current_arg[0] == '-') {
+            if (current_arg.len > 1) {
+                modifier_slice = current_arg[1..];
             }
-            break;
+        } else if (found_archive_path == null) {
+            found_archive_path = current_arg;
+            continue;
+        } else {
+            try files.append(current_arg);
+            continue;
         }
+
         for (modifier_slice) |modifier_char| {
             if (!processModifier(modifier_char, &modifiers)) {
                 return;
             }
         }
-
-        arg_index = arg_index + 1;
-
-        // check if we still have some modifiers!
-        if (arg_index >= args.len) break;
-        var arg_slice = args[arg_index][0..];
-        if (arg_slice[0] != '-') break;
-        if (arg_slice.len == 1) {
-            printArgumentError("A valid modifer must be provided - only hyphen found.", .{});
-            return;
-        }
-
-        modifier_slice = arg_slice[1..arg_slice.len];
     }
 
     if (modifiers.help) {
@@ -468,10 +439,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
     if (modifiers.show_version) {
         printVersion(stdout);
-        return;
-    }
-
-    if (!checkArgsBounds(args, arg_index, "archive")) {
         return;
     }
 
@@ -494,16 +461,18 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
     // TODO: Process [count]
 
-    const archive_path = args[arg_index];
+    if (operation == .undefined) {
+        logger.err("An operation must be provided.", .{});
+        return;
+    }
 
-    arg_index = arg_index + 1;
-
-    const files = file_result: {
-        if (args.len > arg_index) {
-            break :file_result args[arg_index..args.len];
+    const archive_path = archive_path: {
+        if (found_archive_path) |archive_path| {
+            break :archive_path archive_path;
         }
-        const empty = [_][:0]u8{};
-        break :file_result &empty;
+
+        logger.err("An archive must be provided.", .{});
+        return;
     };
 
     switch (operation) {
@@ -514,7 +483,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
             var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
-            try archive.insertFiles(allocator, files);
+            try archive.insertFiles(allocator, files.items);
             try archive.finalize(allocator);
         },
         .delete => {
@@ -524,7 +493,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
             var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
-            try archive.deleteFiles(files);
+            try archive.deleteFiles(files.items);
             try archive.finalize(allocator);
         },
         .print_names => {
@@ -572,7 +541,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
             var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
             try archive.parse(allocator);
-            try archive.moveFiles(files);
+            try archive.moveFiles(files.items);
             try archive.finalize(allocator);
         },
         .quick_append => {
@@ -593,6 +562,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 return error.TODO; // make sure this is implemented!
             }
             return error.TODO;
+        },
+        .undefined => {
+            // This case is already handled earlier!
+            unreachable;
         },
     }
 }
