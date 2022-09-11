@@ -188,9 +188,14 @@ fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
     }
 }
 
-fn checkArgsBounds(args: []const []const u8, index: u32, comptime missing_argument: []const u8) bool {
-    if (index >= args.len) {
-        printArgumentError("An " ++ missing_argument ++ " must be provided.", .{});
+fn checkOptionalArgsBounds(
+    args: []const []const u8,
+    index: u32,
+    comptime missing_argument: []const u8,
+    comptime for_modifier: []const u8,
+) bool {
+    if (index >= args.len or args[index].len < 1 or args[index][0] == '-') {
+        printArgumentError(missing_argument ++ " must be provided for " ++ for_modifier ++ " modifier.", .{});
         return false;
     }
     return true;
@@ -219,8 +224,8 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
     // operation!
     switch (mode) {
         .ar => switch (modifier_char) {
-            'a' => modifiers.move_setting = .before,
-            'b', 'i' => modifiers.move_setting = .after,
+            'a' => modifiers.move_setting = .{ .before = null },
+            'b', 'i' => modifiers.move_setting = .{ .after = null },
             'c' => modifiers.create = true,
             'D' => modifiers.use_real_timestamps_and_ids = false,
             'h' => modifiers.help = true,
@@ -324,14 +329,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     while (arg_index < args.len) {
         defer arg_index += 1;
 
-        if (operation == .undefined) {
-            if (!checkArgsBounds(args, arg_index, "operation")) {
-                return;
-            }
-        } else {
-            if (arg_index >= args.len) {
-                break;
-            }
+        if (arg_index >= args.len) {
+            break;
         }
 
         var current_arg = args[arg_index];
@@ -376,9 +375,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         var modifier_slice: []const u8 = "";
         if (operation == .undefined) {
             operation = operation: {
-                if (!checkArgsBounds(args, arg_index, "operation")) {
-                    return;
-                }
                 const operation_slice = slice: {
                     // the operation may start with a hyphen - so slice it!
                     var arg_slice = current_arg[0..];
@@ -430,6 +426,33 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 return;
             }
         }
+
+        // TODO: Figure out how to deal with multiple of these following settings!
+
+        // Process [relpos] if needed!
+        switch (modifiers.move_setting) {
+            .end => {}, // do nothing!
+            .before => |before| if (before == null) {
+                arg_index += 1;
+                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
+                modifiers.move_setting.before = args[arg_index];
+            },
+            .after => |after| if (after == null) {
+                arg_index += 1;
+                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
+                modifiers.move_setting.after = args[arg_index];
+            },
+        }
+
+        // Process [count] if needed!
+        if (modifiers.instance_to_delete == 0) {
+            arg_index += 1;
+            if (!checkOptionalArgsBounds(args, arg_index, "An [count]", "N")) return;
+            modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, args[arg_index], 10) catch {
+                logger.err("[count] must be a positive number, received '{s}'.", .{args[arg_index]});
+                return;
+            };
+        }
     }
 
     if (modifiers.help) {
@@ -442,8 +465,13 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         return;
     }
 
-    if (modifiers.instance_to_delete == 0) {
-        // TODO: Extract count and make sure we proces this modifier correctly!
+    if (modifiers.move_setting != .end) {
+        // TODO: Implement this!
+        return error.TODO;
+    }
+
+    if (modifiers.instance_to_delete > 1) {
+        // TODO: Implement this!
         return error.TODO;
     }
 
@@ -456,10 +484,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         // TODO: support thing archives!
         return error.TODO;
     }
-
-    // TODO: Process [relpos]
-
-    // TODO: Process [count]
 
     if (operation == .undefined) {
         logger.err("An operation must be provided.", .{});

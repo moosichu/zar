@@ -209,7 +209,12 @@ pub const Header = extern struct {
 
 pub const ExplicitBooleanSetting = enum { ambiguous, set_true, set_false };
 
-pub const MoveSetting = enum { end, before, after };
+pub const MoveSetting = union(enum) {
+    end,
+    before: ?[]const u8,
+    after: ?[]const u8,
+};
+
 pub const Modifiers = struct {
     // Supress warning for file creation
     create: bool = false,
