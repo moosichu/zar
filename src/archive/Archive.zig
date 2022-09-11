@@ -221,6 +221,11 @@ pub const Modifiers = struct {
     move_setting: MoveSetting = .end,
     show_version: bool = false,
     help: bool = false,
+    quick_append_members: bool = false,
+    instance_to_delete: u32 = 1,
+    preserve_original_dates: bool = false,
+    use_full_paths_when_matching: bool = false,
+    thin_archives: bool = false,
 };
 
 pub const Contents = struct {

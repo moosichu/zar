@@ -13,11 +13,29 @@ const Archive = @import("archive/Archive.zig");
 pub const zar_overview =
     \\Zig Archiver
     \\
-    \\Usage: zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
+    \\Usage:
+    \\  zar [options] [-]<operation>[modifiers] [relpos] [count] <archive> [files]
+    \\
+    \\Description:
+    \\  The Zig Archiver is the self-hosted implementation of the ar utility
+    \\  function that originated from Unix, created as a drop-in replacement for
+    \\  llvm's iplementation of ar (llvm ar).
+    \\
+    \\  For more information on archivers and their usage, see:
+    \\    - https://en.wikipedia.org/wiki/Ar_(Unix)
+    \\    - https://www.freebsd.org/cgi/man.cgi?query=ar&sektion=1
+    \\    - https://llvm.org/docs/CommandGuide/llvm-ar.html
     \\
     \\Options:
     \\ --format=<type>
-    \\      Can be default, gnu, darwin or bsd. This determines the format used to serialise an archive, this is ignored when parsing archives as type there is always inferred. When creating an archive the host machine is used to infer <type> if one is not specified.
+    \\      Can be default, gnu, darwin or bsd. This determines the format used to
+    \\      serialise an archive, this is ignored when parsing archives as type
+    \\      there is always inferred. When creating an archive the host machine is
+    \\      used to infer <type> if one is not specified.
+    \\ --thin
+    \\      Create and modify thin archives. By default archives aren't thin. Thin
+    \\      archives are converted to regular achives when modified without this
+    \\      option.
     \\ --version
     \\      Print program version details and exit.
     \\ -h, --help
@@ -38,19 +56,33 @@ pub const zar_overview =
     \\ S - show symbols in the <archive>.
     \\
     \\Modifiers:
-    \\ c - Disable archive creation warning if inserting files to new archive.
-    \\ u - Only update archive contents if [files] have more recent timestamps than it.
-    \\ D - Use zero for timestamps, GIDs and UIDs in archived files (enabled by default).
+    \\ a - Put [files] after the archive member named by [relpos]. (r, m)
+    \\ b - Put [files] before the archive member named by [relpos]. (r, m)
+    \\ c - Disable creation warning if inserting files to new archive. (r, q)
+    \\ D - Use zero for timestamps, GIDs and UIDs in archived files (enabled by
+    \\     default). (r, q, s)
+    \\ h - Display this help text and exit. (alias for --help)
+    \\ i - Put [files] before the archive member named by [relpos]. (r, m)
+    \\ l - Ignored for compatability.
+    \\ L - When quick appending and archive to an archive, append members. (q)
+    \\ N - Delete the [count]th instance of duplicate member with [name]. (d)
+    \\ o - Preserve the archived modification times on extraction. (x)
+    \\ O - Display member offsets inside the archive. (?)
+    \\ P - Use full paths when matching member names. Default for thin archives.
+    \\ r - Create sorted symbol table.
+    \\ R - Do not create sorted symbol table.
+    \\ s - Generate symbol table, enabled by default. (i.e. as if using ranlib)
+    \\ S - Do not generate symbol table.
+    \\ T - Create and modify thin archives. (alias for --thin)
+    \\ u - Only update archive contents if [files] have more recent timestamps
+    \\     than it.
     \\ U - Use real timestamps, GIDS and UIDs for archived files.
     \\ v - Print verbose output, depending on opertion:
-    \\     S: show file names that symbols belong to.
-    \\ s - Generate symbol table
-    \\ S - Do not generate symbol table
-    \\ r - Create sorted symbol table
-    \\ R - Do not create sorted symbol table
-    \\ V - Display the version and exit
+    \\      S: show file names that symbols belong to.
+    \\ V - Display the version and exit.
     \\
-    \\Note, in the case of conflicting modifiers, the last one listed always takes precedence.
+    \\Note, in the case of conflicting modifiers, the last one listed always takes
+    \\precedence.
     \\
 ;
 
@@ -183,21 +215,30 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
 }
 
 fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
+    // TODO: make sure modifers are only allowed for their supported mode of
+    // operation!
     switch (mode) {
         .ar => switch (modifier_char) {
-            'c' => modifiers.create = true,
-            'u' => modifiers.update_only = true,
-            'U' => modifiers.use_real_timestamps_and_ids = true,
-            'D' => modifiers.use_real_timestamps_and_ids = false,
-            'v' => modifiers.verbose = true,
-            's' => modifiers.build_symbol_table = true,
-            'S' => modifiers.build_symbol_table = false,
-            'r' => modifiers.sort_symbol_table = .set_true,
-            'R' => modifiers.sort_symbol_table = .set_false,
             'a' => modifiers.move_setting = .before,
             'b', 'i' => modifiers.move_setting = .after,
-            'V' => modifiers.show_version = true,
+            'c' => modifiers.create = true,
+            'D' => modifiers.use_real_timestamps_and_ids = false,
             'h' => modifiers.help = true,
+            'l' => {}, // ignored for compatability
+            'L' => modifiers.quick_append_members = true,
+            'N' => modifiers.instance_to_delete = 0,
+            'o' => modifiers.preserve_original_dates = true,
+            'O' => unreachable, // TODO: implement this!
+            'P' => modifiers.use_full_paths_when_matching = true,
+            'r' => modifiers.sort_symbol_table = .set_true,
+            'R' => modifiers.sort_symbol_table = .set_false,
+            's' => modifiers.build_symbol_table = true,
+            'S' => modifiers.build_symbol_table = false,
+            'T' => modifiers.thin_archives = true,
+            'u' => modifiers.update_only = true,
+            'U' => modifiers.use_real_timestamps_and_ids = true,
+            'v' => modifiers.verbose = true,
+            'V' => modifiers.show_version = true,
             // TODO: Ensure all modifiers we need to handle are handled!
             else => {
                 printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
@@ -275,6 +316,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         break :mode .ar;
     };
 
+    var modifiers: Archive.Modifiers = .{};
+
     // Process Options First
     // TODO: based on observed behaviour of ranlib and ar, this order isn't actually
     // fixed. Need to write some tests to fuzz these and then match llvm's behaviour
@@ -291,8 +334,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const format_string_prefix = "--format=";
             const plugin_string_prefix = "--plugin=";
             const help_string = "--help";
-            const help_shortcut = "-h";
             const version_string = "--version";
+            const thin_string = "--thin";
             if (mode == .ar and mem.startsWith(u8, current_arg, format_string_prefix)) {
                 keep_processing_current_option = true;
 
@@ -315,11 +358,16 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 keep_processing_current_option = true;
                 arg_index = arg_index + 1;
                 continue;
+            } else if (mode == .ar and mem.eql(u8, current_arg, thin_string)) {
+                modifiers.thin_archives = true;
+                keep_processing_current_option = true;
+                arg_index = arg_index + 1;
+                continue;
             } else if (args[arg_index].len == 0) {
                 keep_processing_current_option = true;
                 arg_index = arg_index + 1;
                 continue;
-            } else if (mem.eql(u8, current_arg, help_string) or mem.eql(u8, current_arg, help_shortcut)) {
+            } else if (mem.eql(u8, current_arg, help_string)) {
                 printHelp(stdout);
                 return;
             } else if (mem.eql(u8, current_arg, version_string)) {
@@ -384,7 +432,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         }
     };
 
-    var modifiers: Archive.Modifiers = .{};
     while (true) {
         if (modifier_slice.len == 0) {
             // operation argument didn't have any modifiers,
@@ -426,6 +473,21 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 
     if (!checkArgsBounds(args, arg_index, "archive")) {
         return;
+    }
+
+    if (modifiers.instance_to_delete == 0) {
+        // TODO: Extract count and make sure we proces this modifier correctly!
+        return error.TODO;
+    }
+
+    if (modifiers.use_full_paths_when_matching) {
+        // TODO: Implement this!
+        return error.TODO;
+    }
+
+    if (modifiers.thin_archives) {
+        // TODO: support thing archives!
+        return error.TODO;
     }
 
     // TODO: Process [relpos]
@@ -515,6 +577,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .quick_append => {
             logger.err("quick append still needs to be implemented!\n", .{});
+            // TODO: ensure modifiers.quick_append_members is respected!
             return error.TODO;
         },
         .ranlib => {
@@ -526,6 +589,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .extract => {
             logger.err("extract still needs to be implemented!\n", .{});
+            if (modifiers.preserve_original_dates) {
+                return error.TODO; // make sure this is implemented!
+            }
             return error.TODO;
         },
     }
