@@ -1457,33 +1457,44 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
     }
 }
 
+const MriCommand = union(enum) {
+    // open: struct { archive: []const u8 },
+    create: struct { archive: []const u8 },
+    createthin: struct { archive: []const u8 },
+    addlib: struct { archive: []const u8 },
+    addmod: struct { file: []const u8 },
+    // list,
+    delete: struct { file: []const u8 },
+    // extract,
+    save,
+    // clear,
+    end,
+    // no more commands left
+    none,
+};
+
+pub const MriCommandError = error{
+    InvalidCommand,
+};
+
+const MriParserState = enum {
+    root,
+    in_comment,
+};
+
 pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type {
-    const Command = union(enum) {
-        // open: struct { archive: []const u8 },
-        create: struct { archive: []const u8 },
-        createthin: struct { archive: []const u8 },
-        addlib: struct { archive: []const u8 },
-        addmod: struct { file: []const u8 },
-        // list,
-        delete: struct { file: []const u8 },
-        // extract,
-        save,
-        // clear,
-        end,
-        // no more commands left
-        none,
-    };
-    // const State = enum {
-    //     root,
-    //     create_or_createthin,
-    // };
     const CommandReader = struct {
         reader: Reader,
         command_process_buffer: [buffer_size]u8 = undefined,
         buffer_index: u16 = 0,
         command_process_buffer_index: u16 = 0,
+        current_line: u32 = 0,
 
         const Self = @This();
+
+        fn isComment(c: u8) bool {
+            return c == ';' or c == '*';
+        }
 
         fn getNextCharacter(self: *Self) !u8 {
             var buf: [1]u8 = undefined;
@@ -1492,13 +1503,49 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
                 if (test_errors_handled) return error.Handled;
                 return e;
             };
-            if (chars_returned == 1) return buf[0];
+            if (chars_returned == 1) {
+                if (buf[0] == '\n') self.current_line += 1;
+                return buf[0];
+            }
             return error.EndOfStream;
         }
 
         fn getNextCommandCharacter(self: *Self) !u8 {
-            const c = try self.getNextCharacter();
+            var c = try self.getNextCharacter();
+            std.debug.assert(self.buffer_index < self.command_process_buffer.len);
+
+            var state: MriParserState = .root;
+            if (self.buffer_index == 0) {
+                while (std.ascii.isSpace(c) or isComment(c) or state == .in_comment) {
+                    if (state == .in_comment) {
+                        if (c == '\n') state = .root;
+                    } else if (isComment(c)) {
+                        state = .in_comment;
+                    }
+                    c = try self.getNextCharacter();
+                }
+            }
+
+            self.command_process_buffer[self.buffer_index] = c;
+            self.buffer_index += 1;
+
+            if (std.ascii.isSpace(c) or isComment(c)) {
+                return error.EndOfCommand;
+            }
+
             return std.ascii.toLower(c);
+        }
+
+        fn handleInvalidCommand(self: *Self) (HandledError || CriticalError || MriCommandError) {
+            var c = self.command_process_buffer[self.buffer_index];
+            while (!std.ascii.isSpace(c) and !isComment(c)) {
+                c = self.getNextCharacter() catch |e| return e;
+                // TODO! deal with running out of space here!
+                self.buffer_index += 1;
+                self.command_process_buffer[self.buffer_index] = c;
+            }
+            logger.err("script line {}: unknown command: {s}", .{ self.current_line, self.command_process_buffer[0..self.buffer_index] });
+            return MriCommandError.InvalidCommand;
         }
 
         fn getCommandParameter(self: *Self) ![]u8 {
@@ -1526,159 +1573,163 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             }
         }
 
-        pub fn getNextCommand(self: *Self) (HandledError || UnhandledError)!Command {
-            while (true) {
-                var c = self.getNextCommandCharacter() catch |e| switch (e) {
-                    error.EndOfStream => break,
-                    else => |e_else| return e_else,
-                };
-                if (std.ascii.isSpace(c)) continue;
+        pub fn getNextCommand(self: *Self) (HandledError || CriticalError || MriCommandError)!MriCommand {
+            self.buffer_index = 0;
+            var c = self.getNextCommandCharacter() catch |e| switch (e) {
+                error.EndOfStream => return error.TODO,
+                // haven't started processing a command yet, so this error should be impossible!
+                error.EndOfCommand => unreachable,
+                else => |e_else| return e_else,
+            };
 
-                switch (c) {
-                    'c' => {
-                        for (@tagName(Command.createthin)[1..]) |createthin_char, createthin_char_index| {
-                            if (createthin_char_index + 1 < @tagName(Command.create).len) {
-                                std.debug.assert(@tagName(Command.create)[1 + createthin_char_index] == createthin_char);
-                            }
+            switch (c) {
+                'c' => {
+                    for (@tagName(MriCommand.createthin)[1..]) |createthin_char, createthin_char_index| {
+                        if (createthin_char_index + 1 < @tagName(MriCommand.create).len) {
+                            std.debug.assert(@tagName(MriCommand.create)[1 + createthin_char_index] == createthin_char);
+                        }
 
-                            c = self.getNextCommandCharacter() catch |e| switch (e) {
-                                error.EndOfStream => return error.TODO,
-                                else => |e_else| return e_else,
-                            };
-                            if (createthin_char_index + 1 == @tagName(Command.create).len) {
-                                if (std.ascii.isSpace(c)) {
+                        c = self.getNextCommandCharacter() catch |e| switch (e) {
+                            error.EndOfStream => return error.TODO,
+                            error.EndOfCommand => {
+                                if (createthin_char_index + 1 == @tagName(MriCommand.create).len) {
                                     // we have a create command!
-                                    const archive = self.getCommandParameter() catch |e| switch (e) {
+                                    const archive = self.getCommandParameter() catch |ep| switch (ep) {
                                         error.EndOfStream => return error.TODO,
                                         else => |e_else| return e_else,
                                     };
                                     return .{ .create = .{ .archive = archive } };
                                 }
-                            }
+                                return self.handleInvalidCommand();
+                            },
+                            else => |e_else| return e_else,
+                        };
 
-                            if (createthin_char == c) {
-                                // all is good!
-                            } else {
-                                // error - bad command!
-                                return error.TODO;
-                            }
+                        if (createthin_char != c) {
+                            // error - bad command!
+                            return self.handleInvalidCommand();
                         }
+                    }
 
+                    c = self.getNextCommandCharacter() catch |e| switch (e) {
+                        error.EndOfStream => return error.TODO,
+                        error.EndOfCommand => {
+                            const archive = self.getCommandParameter() catch |ep| switch (ep) {
+                                error.EndOfStream => return error.TODO,
+                                else => |e_else| return e_else,
+                            };
+                            return .{ .createthin = .{ .archive = archive } };
+                        },
+                        else => |e_else| return e_else,
+                    };
+
+                    return self.handleInvalidCommand();
+                },
+                'a' => {
+                    for (@tagName(MriCommand.addmod)[1..]) |addmod_char| {
                         c = self.getNextCommandCharacter() catch |e| switch (e) {
                             error.EndOfStream => return error.TODO,
+                            error.EndOfCommand => return self.handleInvalidCommand(),
                             else => |e_else| return e_else,
                         };
 
-                        if (!std.ascii.isSpace(c)) {
+                        if (addmod_char != c) {
                             // error - bad command!
-                            return error.TODO;
+                            return self.handleInvalidCommand();
                         }
+                    }
 
-                        const archive = self.getCommandParameter() catch |e| switch (e) {
-                            error.EndOfStream => return error.TODO,
-                            else => |e_else| return e_else,
-                        };
-                        return .{ .createthin = .{ .archive = archive } };
-                    },
-                    'a' => {
-                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
-                            c = self.getNextCharacter() catch |e| switch (e) {
+                    c = self.getNextCommandCharacter() catch |e| switch (e) {
+                        error.EndOfStream => return error.TODO,
+                        error.EndOfCommand => {
+                            const file = self.getCommandParameter() catch |ep| switch (ep) {
                                 error.EndOfStream => return error.TODO,
                                 else => |e_else| return e_else,
                             };
+                            return .{ .addmod = .{ .file = file } };
+                        },
+                        else => |e_else| return e_else,
+                    };
 
-                            if (addmod_char == c) {
-                                // all is good!
-                            } else {
-                                // error - bad command!
-                                return error.TODO;
-                            }
-                        }
-
+                    return self.handleInvalidCommand();
+                },
+                'd' => {
+                    for (@tagName(MriCommand.delete)[1..]) |delete_char| {
                         c = self.getNextCommandCharacter() catch |e| switch (e) {
                             error.EndOfStream => return error.TODO,
+                            error.EndOfCommand => return self.handleInvalidCommand(),
                             else => |e_else| return e_else,
                         };
-                        if (!std.ascii.isSpace(c)) {
-                            // error - bad command!
-                            return error.TODO;
-                        }
 
-                        const file = self.getCommandParameter() catch |e| switch (e) {
-                            error.EndOfStream => return error.TODO,
-                            else => |e_else| return e_else,
-                        };
-                        return .{ .addmod = .{ .file = file } };
-                    },
-                    'd' => {
-                        for (@tagName(Command.delete)[1..]) |delete_char| {
-                            c = self.getNextCharacter() catch |e| switch (e) {
+                        if (delete_char != c) {
+                            return self.handleInvalidCommand();
+                        }
+                    }
+
+                    c = self.getNextCommandCharacter() catch |e| switch (e) {
+                        error.EndOfStream => return error.TODO,
+                        error.EndOfCommand => {
+                            const file = self.getCommandParameter() catch |ep| switch (ep) {
                                 error.EndOfStream => return error.TODO,
                                 else => |e_else| return e_else,
                             };
+                            return .{ .delete = .{ .file = file } };
+                        },
+                        else => |e_else| return e_else,
+                    };
 
-                            if (delete_char == c) {
-                                // all is good!
-                            } else {
-                                // error - bad command!
-                                return error.TODO;
-                            }
-                        }
-
+                    return self.handleInvalidCommand();
+                },
+                's' => {
+                    for (@tagName(MriCommand.save)[1..]) |save_char| {
                         c = self.getNextCommandCharacter() catch |e| switch (e) {
                             error.EndOfStream => return error.TODO,
+                            error.EndOfCommand => return self.handleInvalidCommand(),
                             else => |e_else| return e_else,
                         };
-                        if (!std.ascii.isSpace(c)) {
-                            // error - bad command!
-                            return error.TODO;
-                        }
 
-                        const file = self.getCommandParameter() catch |e| switch (e) {
+                        if (save_char != c) {
+                            return self.handleInvalidCommand();
+                        }
+                    }
+
+                    c = self.getNextCommandCharacter() catch |e| switch (e) {
+                        error.EndOfStream => return error.TODO,
+                        error.EndOfCommand => {
+                            return .save;
+                        },
+                        else => |e_else| return e_else,
+                    };
+
+                    return self.handleInvalidCommand();
+                },
+                'e' => {
+                    for (@tagName(MriCommand.end)[1..]) |end_char| {
+                        c = self.getNextCommandCharacter() catch |e| switch (e) {
                             error.EndOfStream => return error.TODO,
+                            error.EndOfCommand => return self.handleInvalidCommand(),
                             else => |e_else| return e_else,
                         };
-                        return .{ .delete = .{ .file = file } };
-                    },
-                    's' => {
-                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
-                            c = self.getNextCharacter() catch |e| switch (e) {
-                                error.EndOfStream => return error.TODO,
-                                else => |e_else| return e_else,
-                            };
 
-                            if (addmod_char == c) {
-                                // all is good!
-                            } else {
-                                // error - bad command!
-                                return error.TODO;
-                            }
+                        if (end_char != c) {
+                            return self.handleInvalidCommand();
                         }
+                    }
 
-                        return .save;
-                    },
-                    'e' => {
-                        for (@tagName(Command.addmod)[1..]) |addmod_char| {
-                            c = self.getNextCharacter() catch |e| switch (e) {
-                                error.EndOfStream => return error.TODO,
-                                else => |e_else| return e_else,
-                            };
+                    c = self.getNextCommandCharacter() catch |e| switch (e) {
+                        error.EndOfStream => return error.TODO,
+                        error.EndOfCommand => {
+                            return .end;
+                        },
+                        else => |e_else| return e_else,
+                    };
 
-                            if (addmod_char == c) {
-                                // all is good!
-                            } else {
-                                // error - bad command!
-                                return error.TODO;
-                            }
-                        }
-
-                        return .end;
-                    },
-                    else => {
-                        // error - bad command!
-                        return error.TODO;
-                    },
-                }
+                    return self.handleInvalidCommand();
+                },
+                else => {
+                    // error - bad command!
+                    return error.TODO;
+                },
             }
             return .end;
         }
@@ -1700,7 +1751,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             return self;
         }
 
-        pub fn execute(self: *Self) (HandledError || UnhandledError)!void {
+        pub fn execute(self: *Self) (HandledError || CriticalError || MriCommandError)!void {
             while (true) {
                 const command = try self.command_reader.getNextCommand();
                 switch (command) {
