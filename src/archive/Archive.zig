@@ -890,10 +890,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                     error.UnsupportedCpuArchitecture, error.EndOfStream => return error.TODO,
                 };
 
-                for (macho_file.symtab.items) |sym| {
+                for (macho_file.symtab) |sym, sym_index| {
                     if (sym.ext() and sym.sect()) {
                         const symbol = Symbol{
-                            .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                            .name = try allocator.dupe(u8, macho_file.getSymbolName(@intCast(u32, sym_index))),
                             .file_index = file_index,
                         };
 
