@@ -1519,7 +1519,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
 
             var state: MriParserState = .root;
             if (self.buffer_index == 0) {
-                while (std.ascii.isSpace(c) or isComment(c) or state == .in_comment) {
+                while (std.ascii.isWhitespace(c) or isComment(c) or state == .in_comment) {
                     if (state == .in_comment) {
                         if (c == '\n') state = .root;
                     } else if (isComment(c)) {
@@ -1532,7 +1532,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             self.command_process_buffer[self.buffer_index] = c;
             self.buffer_index += 1;
 
-            if (std.ascii.isSpace(c) or isComment(c)) {
+            if (std.ascii.isWhitespace(c) or isComment(c)) {
                 return error.EndOfCommand;
             }
 
@@ -1541,7 +1541,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
 
         fn handleInvalidCommand(self: *Self) (HandledError || CriticalError || MriCommandError) {
             var c = self.command_process_buffer[self.buffer_index];
-            while (!std.ascii.isSpace(c) and !isComment(c)) {
+            while (!std.ascii.isWhitespace(c) and !isComment(c)) {
                 c = self.getNextCharacter() catch |e| return e;
                 // TODO! deal with running out of space here!
                 self.buffer_index += 1;
@@ -1566,7 +1566,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
                     },
                     else => |e_else| return e_else,
                 };
-                if (std.ascii.isSpace(c)) {
+                if (std.ascii.isWhitespace(c)) {
                     if (buffer_index == 0) continue;
                     return self.command_process_buffer[0..buffer_index];
                 }
@@ -1758,8 +1758,8 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             while (true) {
                 const command = try self.command_reader.getNextCommand();
                 switch (command) {
-                    .create => |create| {
-                        _ = create.archive;
+                    .create => |create_command| {
+                        _ = create_command.archive;
                     },
                     .createthin => {},
                     .addlib => {},
