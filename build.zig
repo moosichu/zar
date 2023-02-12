@@ -1,10 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
 
-fn addZld(obj: *std.build.LibExeObjStep) void {
-    obj.addPackagePath("Zld", "zld/src/Zld.zig");
-}
-
 const zar_version = std.builtin.Version{ .major = 0, .minor = 0, .patch = 1 };
 
 pub fn build(b: *std.build.Builder) !void {
@@ -16,15 +12,32 @@ pub fn build(b: *std.build.Builder) !void {
 
     // Standard release options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
-    const mode = b.standardReleaseOptions();
+    const optimize = b.standardOptimizeOption(.{});
 
-    const exe = b.addExecutable("zar", "src/main.zig");
-    var tests = b.addTest("src/test.zig");
-    var tests_exe = b.addTestExe("test", "src/test.zig");
+    const exe = b.addExecutable(.{
+        .name = "zar",
+        .root_source_file = .{ .path = "src/main.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    var tests = b.addTest(.{
+        .root_source_file = .{ .path = "src/test.zig" },
+        .target = target,
+    });
+    var tests_exe = b.addTest(.{
+        .name = "test",
+        .root_source_file = .{ .path = "src/test.zig" },
+        .kind = .test_exe,
+        .target = target,
+    });
 
-    addZld(exe);
-    addZld(tests);
-    addZld(tests_exe);
+    const zld = b.createModule(.{
+        .source_file = .{ .path = "zld/src/Zld.zig" },
+    });
+
+    exe.addModule("Zld", zld);
+    tests.addModule("Zld", zld);
+    tests_exe.addModule("Zld", zld);
 
     const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 
@@ -139,8 +152,6 @@ pub fn build(b: *std.build.Builder) !void {
         }
     }
 
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
     exe.install();
 
     const run_cmd = exe.run();

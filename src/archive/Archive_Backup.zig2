@@ -162,7 +162,6 @@ pub const IoError = error{
     InvalidUtf8,
     LockViolation,
     NameTooLong,
-    NetNameDeleted,
     NoDevice,
     NoSpaceLeft,
     NotDir,
@@ -891,17 +890,14 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                     error.UnsupportedCpuArchitecture, error.EndOfStream => return error.TODO,
                 };
 
-                if (macho_file.in_symtab) |in_symtab| {
-                    for (in_symtab) |_, sym_index| {
-                        const sym = macho_file.getSourceSymbol(@intCast(u32, sym_index));
-                        if (sym != null and sym.?.ext() and sym.?.sect()) {
-                            const symbol = Symbol{
-                                .name = try allocator.dupe(u8, macho_file.getSymbolName(@intCast(u32, sym_index))),
-                                .file_index = file_index,
-                            };
+                for (macho_file.symtab.items) |sym| {
+                    if (sym.ext() and sym.sect()) {
+                        const symbol = Symbol{
+                            .name = try allocator.dupe(u8, macho_file.getString(sym.n_strx)),
+                            .file_index = file_index,
+                        };
 
-                            try self.symbols.append(allocator, symbol);
-                        }
+                        try self.symbols.append(allocator, symbol);
                     }
                 }
             } else if (false) {
@@ -1520,7 +1516,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
 
             var state: MriParserState = .root;
             if (self.buffer_index == 0) {
-                while (std.ascii.isWhitespace(c) or isComment(c) or state == .in_comment) {
+                while (std.ascii.isSpace(c) or isComment(c) or state == .in_comment) {
                     if (state == .in_comment) {
                         if (c == '\n') state = .root;
                     } else if (isComment(c)) {
@@ -1533,7 +1529,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             self.command_process_buffer[self.buffer_index] = c;
             self.buffer_index += 1;
 
-            if (std.ascii.isWhitespace(c) or isComment(c)) {
+            if (std.ascii.isSpace(c) or isComment(c)) {
                 return error.EndOfCommand;
             }
 
@@ -1542,7 +1538,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
 
         fn handleInvalidCommand(self: *Self) (HandledError || CriticalError || MriCommandError) {
             var c = self.command_process_buffer[self.buffer_index];
-            while (!std.ascii.isWhitespace(c) and !isComment(c)) {
+            while (!std.ascii.isSpace(c) and !isComment(c)) {
                 c = self.getNextCharacter() catch |e| return e;
                 // TODO! deal with running out of space here!
                 self.buffer_index += 1;
@@ -1567,7 +1563,7 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
                     },
                     else => |e_else| return e_else,
                 };
-                if (std.ascii.isWhitespace(c)) {
+                if (std.ascii.isSpace(c)) {
                     if (buffer_index == 0) continue;
                     return self.command_process_buffer[0..buffer_index];
                 }
@@ -1759,8 +1755,8 @@ pub fn MriParser(comptime Reader: type, comptime buffer_size: comptime_int) type
             while (true) {
                 const command = try self.command_reader.getNextCommand();
                 switch (command) {
-                    .create => |create_command| {
-                        _ = create_command.archive;
+                    .create => |create| {
+                        _ = create.archive;
                     },
                     .createthin => {},
                     .addlib => {},
