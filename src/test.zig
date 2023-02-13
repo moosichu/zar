@@ -279,6 +279,7 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         defer if (!cancel_cleanup) test_dir_info.cleanup();
         errdefer {
             cancel_cleanup = true;
+            logger.err("Failed on target: {s}", .{target.targetToArgument()});
         }
 
         // Create an archive with llvm ar & zar and confirm that the outputs match
