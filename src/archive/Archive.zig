@@ -321,8 +321,8 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
     // inferred up to this point.
     // TODO: Figure out why this is needed to pass tests on macOS as this seems
     // to contradict docs/code?
+    if (builtin.os.tag.isDarwin()) return .darwin;
     return .gnu;
-    // if (builtin.os.tag.isDarwin()) return .darwin;
     // switch (builtin.os.tag) {
     //     .windows => return .coff,
     //     else => return .gnu,
@@ -614,8 +614,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
             // BSD format: Write the symbol table
             // In darwin if symbol table writing is enabled the expected behaviour
             // is that we write an empty symbol table!
-            const write_symbol_table =
-                self.modifiers.build_symbol_table and (self.symbols.items.len != 0 or self.output_archive_type != .bsd);
+            const write_symbol_table = self.modifiers.build_symbol_table;
             if (write_symbol_table) {
                 const tracy_scope = traceNamed(@src(), "Write Symbol Table");
                 defer tracy_scope.end();
