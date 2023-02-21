@@ -20,9 +20,9 @@ jobs:
         with:
           version: master
       - name: Build
-        run: zig build
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true
       - name: Test
-        run: zig build test
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true test
   test_redis:
     name: Test Redis
     timeout-minutes: 15
@@ -40,7 +40,7 @@ jobs:
         with:
           version: master
       - name: Build
-        run: zig build
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true
       - name: Fetch Redis
         uses: actions/checkout@v2.4.2
         with:
@@ -73,4 +73,4 @@ jobs:
         with:
           version: master
       - name: Build
-        run: zig build -Dtest-errors-handled=true
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true -Dtest-errors-handled=true

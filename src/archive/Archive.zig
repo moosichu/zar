@@ -317,16 +317,12 @@ pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, 
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    // LLVM ar seems to default to gnu-style archives if nothing has been
-    // inferred up to this point.
-    // TODO: Figure out why this is needed to pass tests on macOS as this seems
-    // to contradict docs/code?
+    if (build_options.mimmick_broken_cross_compiled_llvm_ar_behaviour) {
+        return .gnu;
+    }
+
     if (builtin.os.tag.isDarwin()) return .darwin;
     return .gnu;
-    // switch (builtin.os.tag) {
-    //     .windows => return .coff,
-    //     else => return .gnu,
-    // }
 }
 
 pub fn create(

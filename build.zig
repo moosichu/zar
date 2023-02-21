@@ -49,6 +49,12 @@ pub fn build(b: *std.build.Builder) !void {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
         exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
     }
+    {
+        // see docs/llvm_ar_wrong_behaviour_cross_compiled.md for more info on this problem
+        // helps workaround it for testing purposes for now...
+        const mimmick_broken_cross_compiled_llvm_ar_behaviour = b.option(bool, "mimmick-broken-cross-compiled-llvm-ar-behaviour", "Workaround for the fact that cross-compiling zig at the moment result in llvm ar behaving on macOS as if it is running on any other OS") orelse false;
+        exe_options.addOption(bool, "mimmick_broken_cross_compiled_llvm_ar_behaviour", mimmick_broken_cross_compiled_llvm_ar_behaviour);
+    }
 
     // Taken from https://github.com/ziglang/zig/blob/master/build.zig, extract
     // the git commit hash to get an actual version.
