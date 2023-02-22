@@ -369,7 +369,7 @@ pub fn buildSymbolTable(
     const symbol_offsets = try allocator.alloc(i32, self.symbols.items.len);
     errdefer allocator.free(symbol_offsets);
 
-    for (self.symbols.items) |symbol, idx| {
+    for (self.symbols.items, 0..) |symbol, idx| {
         symbol_offsets[idx] = @intCast(i32, symbol_table_size);
         symbol_table_size += symbol.name.len + 1;
     }
@@ -477,7 +477,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
 
     {
         var offset: u32 = 0;
-        for (self.files.items) |file, idx| {
+        for (self.files.items, 0..) |file, idx| {
             relative_file_offsets[idx] = @intCast(i32, offset);
             offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
 
@@ -503,7 +503,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
             defer string_table.deinit();
 
             // Generate the complete string table
-            for (self.files.items) |file, index| {
+            for (self.files.items, 0..) |file, index| {
                 const is_the_name_allowed = (file.name.len < 16) and (self.output_archive_type != .gnuthin);
 
                 // If the file is small enough to fit in header, then just write it there
@@ -653,7 +653,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
                     offset_to_files += 1;
                 }
 
-                for (self.symbols.items) |symbol, idx| {
+                for (self.symbols.items, 0..) |symbol, idx| {
                     ranlibs[idx].ran_strx = symbol_string_table_and_offsets.symbol_offsets[idx];
                     ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files);
                 }
@@ -677,7 +677,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
 
     const tracy_scope = traceNamed(@src(), "Write Files To Archive");
     defer tracy_scope.end();
-    for (self.files.items) |file, index| {
+    for (self.files.items, 0..) |file, index| {
         var header_buffer: [@sizeOf(Header)]u8 = undefined;
 
         const file_length = file_length_calculation: {
@@ -737,7 +737,7 @@ pub fn deleteFiles(self: *Archive, file_names: []const []const u8) (DeleteError 
     // For the list of given file names, find the entry in self.files
     // and remove it from self.files.
     for (file_names) |file_name| {
-        for (self.files.items) |file, index| {
+        for (self.files.items, 0..) |file, index| {
             if (std.mem.eql(u8, file.name, file_name)) {
                 // Remove all the symbols associated with the file
                 // when file is deleted
@@ -887,7 +887,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 };
 
                 if (macho_file.in_symtab) |in_symtab| {
-                    for (in_symtab) |_, sym_index| {
+                    for (in_symtab, 0..) |_, sym_index| {
                         const sym = macho_file.getSourceSymbol(@intCast(u32, sym_index));
                         if (sym != null and sym.?.ext() and sym.?.sect()) {
                             const symbol = Symbol{
@@ -1102,7 +1102,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
-                for (number_array) |_, number_index| {
+                for (number_array, 0..) |_, number_index| {
                     number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
                 }
                 defer allocator.free(number_array);

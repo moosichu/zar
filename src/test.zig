@@ -163,12 +163,12 @@ test "Test Argument Errors" {
 }
 
 fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
-    for (file_names) |_, index| {
+    for (file_names, 0..) |_, index| {
         file_names[index] = try std.fmt.allocPrint(allocator, "index_{}.o", .{index});
     }
-    for (symbol_names) |_, file_index| {
+    for (symbol_names, 0..) |_, file_index| {
         symbol_names[file_index] = try allocator.alloc([]u8, symbol_count);
-        for (symbol_names[file_index]) |_, symbol_index| {
+        for (symbol_names[file_index], 0..) |_, symbol_index| {
             symbol_names[file_index][symbol_index] = try std.fmt.allocPrint(allocator, "symbol_{}_file_{}", .{ symbol_index, file_index });
         }
     }
@@ -224,7 +224,7 @@ const Architecture = enum {
 const llvm_formats = result: {
     const fields = std.meta.fields(LlvmFormat);
     comptime var aggregator: [fields.len]LlvmFormat = undefined;
-    inline for (fields) |field, field_index| {
+    inline for (fields, 0..) |field, field_index| {
         aggregator[field_index] = @intToEnum(LlvmFormat, field.value);
     }
     break :result aggregator;
@@ -382,7 +382,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
         try testing.expectEqual(zig_ar_read, zig_ar_stat.size);
     }
 
-    for (llvm_ar_buffer) |llvm_ar_byte, index| {
+    for (llvm_ar_buffer, 0..) |llvm_ar_byte, index| {
         const zig_ar_byte = zig_ar_buffer[index];
         try testing.expectEqual(llvm_ar_byte, zig_ar_byte);
     }
@@ -406,7 +406,7 @@ fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, t
 
     var memory_buffer = try framework_allocator.alloc(u8, 1024 * 1024);
     defer framework_allocator.free(memory_buffer);
-    for (file_names) |file_name, index| {
+    for (file_names, 0..) |file_name, index| {
         try testing.expectEqualStrings(file_name, archive.files.items[index].name);
         const file = try test_dir.openFile(file_name, .{});
         defer file.close();
@@ -431,7 +431,7 @@ fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, t
     }
 
     var current_index = @as(u32, 0);
-    for (symbol_names) |symbol_names_in_file, file_index| {
+    for (symbol_names, 0..) |symbol_names_in_file, file_index| {
         for (symbol_names_in_file) |symbol_name| {
             const parsed_symbol = archive.symbols.items[current_index];
             var parsed_symbol_name = parsed_symbol.name;
@@ -570,7 +570,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
     // TODO: Test other target triples with appropriate corresponding archive format!
     try argv.append(target.targetToArgument());
 
-    for (symbol_names) |file_symbols, index| {
+    for (symbol_names, 0..) |file_symbols, index| {
         const process_index = @mod(index, child_processes.len);
         if (index >= child_processes.len) {
             // TODO: read results etc.
