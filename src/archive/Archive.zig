@@ -146,6 +146,7 @@ pub const IoError = error{
     InputOutput,
     IsDir,
     NotOpenForReading,
+    InvalidArgument,
     InvalidHandle,
     OperationAborted,
     SystemResources,

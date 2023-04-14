@@ -24,27 +24,18 @@ pub fn build(b: *std.build.Builder) !void {
         .root_source_file = .{ .path = "src/test.zig" },
         .target = target,
     });
-    var tests_exe = b.addTest(.{
-        .name = "test",
-        .root_source_file = .{ .path = "src/test.zig" },
-        .kind = .test_exe,
-        .target = target,
-    });
-
     const zld = b.createModule(.{
         .source_file = .{ .path = "zld/src/Zld.zig" },
     });
 
     exe.addModule("Zld", zld);
     tests.addModule("Zld", zld);
-    tests_exe.addModule("Zld", zld);
 
     const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 
     const exe_options = b.addOptions();
     exe.addOptions("build_options", exe_options);
     tests.addOptions("build_options", exe_options);
-    tests_exe.addOptions("build_options", exe_options);
     {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
         exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
@@ -158,9 +149,9 @@ pub fn build(b: *std.build.Builder) !void {
         }
     }
 
-    exe.install();
+    b.installArtifact(exe);
 
-    const run_cmd = exe.run();
+    const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
         run_cmd.addArgs(args);
@@ -171,10 +162,11 @@ pub fn build(b: *std.build.Builder) !void {
 
     if (build_test_executable_only) {
         const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&tests_exe.step);
-        tests_exe.emit_bin = .{ .emit_to = "zig-out/bin/test" };
+        test_step.dependOn(&tests.step);
+        tests.emit_bin = .{ .emit_to = "zig-out/bin/test" };
     } else {
         const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&tests.step);
+        const run_tests = b.addRunArtifact(tests);
+        test_step.dependOn(&run_tests.step);
     }
 }
