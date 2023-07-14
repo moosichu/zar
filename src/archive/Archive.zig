@@ -190,7 +190,7 @@ pub const bsd_symdef_magic = "__.SYMDEF";
 pub const bsd_symdef_64_magic = "__.SYMDEF_64";
 pub const bsd_symdef_sorted_magic = "__.SYMDEF SORTED";
 
-pub const bsd_symdef_longest_magic = std.math.max(std.math.max(bsd_symdef_magic.len, bsd_symdef_64_magic.len), bsd_symdef_sorted_magic.len);
+pub const bsd_symdef_longest_magic = @max(@max(bsd_symdef_magic.len, bsd_symdef_64_magic.len), bsd_symdef_sorted_magic.len);
 
 pub const invalid_file_index = std.math.maxInt(u64);
 
@@ -371,7 +371,7 @@ pub fn buildSymbolTable(
     errdefer allocator.free(symbol_offsets);
 
     for (self.symbols.items, 0..) |symbol, idx| {
-        symbol_offsets[idx] = @intCast(i32, symbol_table_size);
+        symbol_offsets[idx] = @intCast(symbol_table_size);
         symbol_table_size += symbol.name.len + 1;
     }
 
@@ -396,7 +396,7 @@ pub fn buildSymbolTable(
     }
 
     const result: SymbolStringTableAndOffsets = .{
-        .unpadded_symbol_table_length = @intCast(i32, unpadded_symbol_table_length),
+        .unpadded_symbol_table_length = @as(i32, @intCast(unpadded_symbol_table_length)),
         .symbol_table = symbol_table,
         .symbol_offsets = symbol_offsets,
     };
@@ -467,7 +467,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
     if (sort_symbol_table) {
         const tracy_scope = traceNamed(@src(), "Sort Symbol Table");
         defer tracy_scope.end();
-        std.sort.sort(Symbol, self.symbols.items, &sort_context, SortFn.sorter);
+        std.sort.block(Symbol, self.symbols.items, &sort_context, SortFn.sorter);
     }
 
     // Calculate the offset of file independent of string table and symbol table itself.
@@ -479,12 +479,12 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
     {
         var offset: u32 = 0;
         for (self.files.items, 0..) |file, idx| {
-            relative_file_offsets[idx] = @intCast(i32, offset);
-            offset += @intCast(u32, @sizeOf(Header) + file.contents.bytes.len);
+            relative_file_offsets[idx] = @as(i32, @intCast(offset));
+            offset += @as(u32, @intCast(@sizeOf(Header) + file.contents.bytes.len));
 
             // BSD also keeps the name in its data section
             if (self.output_archive_type.isBsdLike()) {
-                offset += @intCast(u32, file.name.len);
+                offset += @as(u32, @intCast(file.name.len));
 
                 // Add padding
                 while (offset % self.output_archive_type.getAlignment() != 0) {
@@ -495,7 +495,7 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
     }
 
     // Set the mtime of symbol table to now seconds in non-deterministic mode
-    const symtab_time: u64 = (if (self.modifiers.use_real_timestamps_and_ids) @intCast(u64, std.time.milliTimestamp()) else 0) / 1000;
+    const symtab_time: u64 = (if (self.modifiers.use_real_timestamps_and_ids) @as(u64, @intCast(std.time.milliTimestamp())) else 0) / 1000;
 
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
@@ -553,9 +553,9 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
                     const tracy_scope_inner = traceNamed(@src(), "Write Symbol Count");
                     defer tracy_scope_inner.end();
                     if (format == .gnu64) {
-                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u64, @intCast(u64, self.symbols.items.len)));
+                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u64, @as(u64, @intCast(self.symbols.items.len))));
                     } else {
-                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u32, @intCast(u32, self.symbols.items.len)));
+                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u32, @as(u32, @intCast(self.symbols.items.len))));
                     }
                 }
 
@@ -585,9 +585,9 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
 
                     for (self.symbols.items) |symbol| {
                         if (format == .gnu64) {
-                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @intCast(i64, offset_to_files)));
+                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @as(i64, @intCast(offset_to_files))));
                         } else {
-                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files)));
+                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files))));
                         }
                     }
                 }
@@ -638,10 +638,10 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
 
                 if (format == .darwin64) {
                     try handleFileIoError(.writing, self.name, writer.writeAll(bsd_symdef_64_magic));
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @intCast(u64, num_ranlib_bytes), endian));
+                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @as(u64, @intCast(num_ranlib_bytes)), endian));
                 } else {
                     try handleFileIoError(.writing, self.name, writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00"));
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @intCast(u32, num_ranlib_bytes), endian));
+                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @as(u32, @intCast(num_ranlib_bytes)), endian));
                 }
 
                 const ranlibs = try allocator.alloc(Ranlib(IntType), self.symbols.items.len);
@@ -656,15 +656,15 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
 
                 for (self.symbols.items, 0..) |symbol, idx| {
                     ranlibs[idx].ran_strx = symbol_string_table_and_offsets.symbol_offsets[idx];
-                    ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @intCast(i32, offset_to_files);
+                    ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files));
                 }
 
                 try handleFileIoError(.writing, self.name, writer.writeAll(mem.sliceAsBytes(ranlibs)));
 
                 if (format == .darwin64) {
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @intCast(u64, symbol_string_table_and_offsets.unpadded_symbol_table_length), endian));
+                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
                 } else {
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @intCast(u32, symbol_string_table_and_offsets.unpadded_symbol_table_length), endian));
+                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @as(u32, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
                 }
 
                 try handleFileIoError(.writing, self.name, writer.writeAll(symbol_table));
@@ -874,7 +874,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 }
                 const mtime: u64 = mtime: {
                     const stat = file.stat() catch break :mtime 0;
-                    break :mtime @intCast(u64, @divFloor(stat.mtime, 1_000_000_000));
+                    break :mtime @as(u64, @intCast(@divFloor(stat.mtime, 1_000_000_000)));
                 };
 
                 var macho_file = MachO.Object{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
@@ -889,10 +889,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
 
                 if (macho_file.in_symtab) |in_symtab| {
                     for (in_symtab, 0..) |_, sym_index| {
-                        const sym = macho_file.getSourceSymbol(@intCast(u32, sym_index));
+                        const sym = macho_file.getSourceSymbol(@as(u32, @intCast(sym_index)));
                         if (sym != null and sym.?.ext() and sym.?.sect()) {
                             const symbol = Symbol{
-                                .name = try allocator.dupe(u8, macho_file.getSymbolName(@intCast(u32, sym_index))),
+                                .name = try allocator.dupe(u8, macho_file.getSymbolName(@as(u32, @intCast(sym_index)))),
                                 .file_index = file_index,
                             };
 
@@ -956,7 +956,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
             uid = file_stats.uid;
             const mtime_full = file_stats.mtime();
             mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
-            size = @intCast(u64, file_stats.size);
+            size = @as(u64, @intCast(file_stats.size));
             mode = file_stats.mode;
         }
 
@@ -978,12 +978,12 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
             mode = 644;
         }
 
-        const timestamp = @intCast(u128, @divFloor(mtime, std.time.ns_per_s));
+        const timestamp = @as(u128, @intCast(@divFloor(mtime, std.time.ns_per_s)));
 
         // Extract critical error from error set - so IO errors can be handled seperately
         const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, @alignOf(u64), null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => @errSetCast(IoError, e),
+            else => @as(IoError, @errSetCast(e)),
         };
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
@@ -1305,10 +1305,10 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
                         }
 
                         if (chars_read - magic_len > 0) {
-                            try handleFileIoError(.seeking, self.name, reader.context.seekBy(@intCast(i64, magic_len) - @intCast(i64, chars_read)));
+                            try handleFileIoError(.seeking, self.name, reader.context.seekBy(@as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read))));
                         }
 
-                        seek_forward_amount = seek_forward_amount - @intCast(u32, magic_len);
+                        seek_forward_amount = seek_forward_amount - @as(u32, @intCast(magic_len));
 
                         break :magic_match_result true;
                     }
@@ -1322,7 +1322,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
 
                     {
                         const current_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
-                        const remainder = @intCast(u32, (self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment());
+                        const remainder = @as(u32, @intCast((self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment()));
                         seek_forward_amount = seek_forward_amount - remainder;
                         try handleFileIoError(.accessing, self.name, reader.context.seekBy(remainder));
                     }
@@ -1334,11 +1334,11 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
                     // TODO: error if this doesn't divide properly?
                     // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
 
-                    var ranlib_bytes = try allocator.alloc(u8, @intCast(u32, num_ranlib_bytes));
+                    var ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
 
                     // TODO: error handling
                     _ = try handleFileIoError(.reading, self.name, reader.read(ranlib_bytes));
-                    seek_forward_amount = seek_forward_amount - @intCast(u32, num_ranlib_bytes);
+                    seek_forward_amount = seek_forward_amount - @as(u32, @intCast(num_ranlib_bytes));
 
                     var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
@@ -1355,14 +1355,14 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
 
                     if (!self.modifiers.build_symbol_table) {
                         for (ranlibs) |ranlib| {
-                            const symbol_string = mem.sliceTo(symbol_string_bytes[@intCast(u64, ranlib.ran_strx)..], 0);
+                            const symbol_string = mem.sliceTo(symbol_string_bytes[@as(u64, @intCast(ranlib.ran_strx))..], 0);
 
                             const symbol = Symbol{
                                 .name = symbol_string,
                                 // Note - we don't set the final file-index here,
                                 // we recalculate and override that later in parsing
                                 // when we know what they are!
-                                .file_index = @intCast(u64, ranlib.ran_off),
+                                .file_index = @as(u64, @intCast(ranlib.ran_off)),
                             };
 
                             try self.symbols.append(allocator, symbol);
@@ -1419,7 +1419,7 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
         if (self.modifiers.build_symbol_table) {
             const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
             // TODO: Actually handle these errors!
-            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @intCast(u32, offset_hack)) catch {
+            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
                 return error.TODO;
             };
 

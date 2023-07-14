@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 
-const zar_version = std.builtin.Version{ .major = 0, .minor = 0, .patch = 1 };
+const zar_version = std.SemanticVersion{ .major = 0, .minor = 0, .patch = 1 };
 
 pub fn build(b: *std.build.Builder) !void {
     // Standard target options allows the person running `zig build` to choose
@@ -24,18 +24,31 @@ pub fn build(b: *std.build.Builder) !void {
         .root_source_file = .{ .path = "src/test.zig" },
         .target = target,
     });
+
+    // TODO: Figure this out!
+    // {
+    //     const zld_options = b.addOptions();
+    //     zld.addOptions("build_options", zld_options);
+    //     zld_options.addOption(bool, "enable_logging", false);
+    //     zld_options.addOption(bool, "enable_tracy", tracy != null);
+    // }
+
+    const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
+
+    const exe_options = b.addOptions();
+    const options_module = exe_options.createModule();
+
     const zld = b.createModule(.{
         .source_file = .{ .path = "zld/src/Zld.zig" },
+        .dependencies = &[_]std.build.ModuleDependency{.{ .name = "build_options", .module = options_module }},
     });
 
     exe.addModule("Zld", zld);
     tests.addModule("Zld", zld);
 
-    const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
+    exe.addModule("build_options", options_module);
+    tests.addModule("build_options", options_module);
 
-    const exe_options = b.addOptions();
-    exe.addOptions("build_options", exe_options);
-    tests.addOptions("build_options", exe_options);
     {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
         exe_options.addOption(bool, "test_errors_handled", test_errors_handled);
@@ -79,7 +92,7 @@ pub fn build(b: *std.build.Builder) !void {
                 const commit_height = it.next().?;
                 const commit_id = it.next().?;
 
-                const ancestor_ver = try std.builtin.Version.parse(tagged_ancestor);
+                const ancestor_ver = try std.SemanticVersion.parse(tagged_ancestor);
                 if (zar_version.order(ancestor_ver) != .gt) {
                     std.debug.print("Zig version '{}' must be greater than tagged ancestor '{}'\n", .{ zar_version, ancestor_ver });
                     std.process.exit(1);

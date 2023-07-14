@@ -183,8 +183,8 @@ const targets = result: {
     inline for (os_fields) |os_field| {
         inline for (arch_fields) |arch_field| {
             aggregator[target_index] = .{
-                .architecture = @intToEnum(Architecture, arch_field.value),
-                .operating_system = @intToEnum(OperatingSystem, os_field.value),
+                .architecture = @as(Architecture, @enumFromInt(arch_field.value)),
+                .operating_system = @as(OperatingSystem, @enumFromInt(os_field.value)),
             };
             target_index += 1;
         }
@@ -225,7 +225,7 @@ const llvm_formats = result: {
     const fields = std.meta.fields(LlvmFormat);
     comptime var aggregator: [fields.len]LlvmFormat = undefined;
     inline for (fields, 0..) |field, field_index| {
-        aggregator[field_index] = @intToEnum(LlvmFormat, field.value);
+        aggregator[field_index] = @as(LlvmFormat, @enumFromInt(field.value));
     }
     break :result aggregator;
 };
@@ -553,7 +553,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime tar
     const tracy = trace(@src());
     defer tracy.end();
 
-    const worker_count = std.math.max(1, std.Thread.getCpuCount() catch 1);
+    const worker_count = @max(1, std.Thread.getCpuCount() catch 1);
     const child_processes = try framework_allocator.alloc(std.ChildProcess, worker_count);
 
     var argv = std.ArrayList([]const u8).init(framework_allocator);

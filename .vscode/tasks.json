@@ -6,12 +6,29 @@
         {
             "label": "Build",
             "type": "shell",
-            "command": "zig build"
+            "command": "zig build",
+            "problemMatcher": [
+                "$zig",
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true,
+            },
+            "presentation": {
+                "clear": true,
+            },
         },
         {
             "label": "Build Tests",
             "type": "shell",
-            "command": "zig build test -Dbuild-tests=true"
+            "command": "zig build test -Dbuild-tests=true",
+            "group": {
+                "kind": "test",
+                "isDefault": true,
+            },
+            "presentation": {
+                "clear": true,
+            },
         }
     ]
 }
