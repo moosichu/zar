@@ -164,6 +164,7 @@ pub const IoError = error{
     LockViolation,
     NameTooLong,
     NetNameDeleted,
+    NetworkNotFound,
     NoDevice,
     NoSpaceLeft,
     NotDir,
