@@ -138,14 +138,13 @@ pub fn build(b: *std.build.Builder) !void {
                 &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
             else
                 &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
-
-            exe.addIncludePath(tracy_path);
-            exe.addCSourceFile(client_cpp, tracy_c_flags);
+            exe.addIncludePath(.{ .path = tracy_path });
+            exe.addCSourceFile(.{ .file = .{ .path = client_cpp }, .flags = tracy_c_flags });
             exe.linkLibC();
             exe.linkLibCpp();
 
-            tests.addIncludePath(tracy_path);
-            tests.addCSourceFile(client_cpp, tracy_c_flags);
+            tests.addIncludePath(.{ .path = tracy_path });
+            tests.addCSourceFile(.{ .file = .{ .path = client_cpp }, .flags = tracy_c_flags });
             tests.linkLibC();
             tests.linkLibCpp();
 
@@ -176,7 +175,7 @@ pub fn build(b: *std.build.Builder) !void {
     if (build_test_executable_only) {
         const test_step = b.step("test", "Run tests");
         test_step.dependOn(&tests.step);
-        tests.emit_bin = .{ .emit_to = "zig-out/bin/test" };
+        // tests.emit_bin = .{ .emit_to = "zig-out/bin/test" };
     } else {
         const test_step = b.step("test", "Run tests");
         const run_tests = b.addRunArtifact(tests);
