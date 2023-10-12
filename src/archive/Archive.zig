@@ -984,7 +984,7 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
         // Extract critical error from error set - so IO errors can be handled seperately
         const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, @alignOf(u64), null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => @as(IoError, @errSetCast(e)),
+            else => @as(IoError, @errorCast(e)),
         };
         var archived_file = ArchivedFile{
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),

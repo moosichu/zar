@@ -606,7 +606,7 @@ fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !vo
         }
     }
 
-    const unhandled_err: Archive.UnhandledError = @errSetCast(err);
+    const unhandled_err: Archive.UnhandledError = @errorCast(err);
 
     switch (unhandled_err) {
         // These are errors which already have appropraite log messages printed
