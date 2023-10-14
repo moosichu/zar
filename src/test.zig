@@ -121,9 +121,6 @@ test "Test Archive Sorted" {
 }
 
 test "Test Argument Errors" {
-    if (true) {
-        return;
-    }
     if (builtin.target.os.tag == .windows) {
         return;
     }
@@ -282,7 +279,7 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         defer if (!cancel_cleanup) test_dir_info.cleanup();
         errdefer {
             cancel_cleanup = true;
-            logger.err("Failed on target: {s}", .{target.targetToArgument()});
+            logger.err("Failed to do archiving operation with files for target: {s}", .{target.targetToArgument()});
         }
 
         // Create an archive with llvm ar & zar and confirm that the outputs match
@@ -290,20 +287,28 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
         const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
         try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
-
         {
-            try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(framework_allocator, target, .implicit, file_names, symbol_names, test_dir_info);
-            try testArchiveCreation(target, .implicit, file_names, test_dir_info);
-            // try testSymbolStrippingAndRanlib(test_dir_info);
+            errdefer {
+                logger.err("Tests failed with explicitly provided archive format: {} ", .{llvm_format});
+            }
+            // Create an archive explicitly with the format for the target operating system
+            try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
+            try testParsingOfLlvmGeneratedArchive(target, framework_allocator, llvm_format, file_names, symbol_names, test_dir_info);
+            try testArchiveCreation(llvm_format, file_names, test_dir_info);
+            try testSymbolStrippingAndRanlib(test_dir_info);
             try test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
+
         {
-            try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(framework_allocator, target, llvm_format, file_names, symbol_names, test_dir_info);
-            try testArchiveCreation(target, llvm_format, file_names, test_dir_info);
-            // try testSymbolStrippingAndRanlib(test_dir_info);
+            errdefer {
+                logger.err("Tests failed with implict archive format", .{});
+            }
+            // Create an archive implcitly with the format for the target operating system
+            try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
+            try testParsingOfLlvmGeneratedArchive(target, framework_allocator, .implicit, file_names, symbol_names, test_dir_info);
+            try testArchiveCreation(.implicit, file_names, test_dir_info);
+            try testSymbolStrippingAndRanlib(test_dir_info);
             try test_dir_info.tmp_dir.dir.deleteFile(zig_ar_archive_name);
             try test_dir_info.tmp_dir.dir.deleteFile(llvm_ar_archive_name);
         }
@@ -336,24 +341,24 @@ fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveCreation(comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testArchiveCreation(comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
     errdefer {
-        logger.err("Failed creation {s} on format {}", .{ target.targetToArgument(), format });
+        logger.err("Failed create archive with zar that matched llvm with target format {}", .{format});
     }
     const operation = "rc";
     try doZarArchiveOperation(format, operation, file_names, test_dir_info);
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(framework_allocator: Allocator, comptime target: Target, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
-        logger.err("Failed parsing {s} on format {}", .{ target.targetToArgument(), format });
+        logger.err("Failed to get zar to parse file generated with the format {}", .{format});
     }
 
-    try testArchiveParsing(framework_allocator, target, test_dir_info, file_names, symbol_names);
+    try testArchiveParsing(target, framework_allocator, test_dir_info, file_names, symbol_names);
 }
 
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
@@ -391,7 +396,7 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveParsing(framework_allocator: Allocator, comptime target: Target, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
+fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
@@ -526,6 +531,9 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
 }
 
 fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+    errdefer {
+        logger.err("Failed to run llvm ar operation {s} with the provided format: {}", .{ operation, format });
+    }
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
