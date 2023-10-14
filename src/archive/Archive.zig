@@ -612,7 +612,17 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
             // BSD format: Write the symbol table
             // In darwin if symbol table writing is enabled the expected behaviour
             // is that we write an empty symbol table!
-            const write_symbol_table = self.modifiers.build_symbol_table;
+            // However - there is one exception to this, which is that llvm ar
+            // does not generate the symbol table if we haven't just created
+            // the archive *and* we aren't running from a darwing host.
+            // WHAT ?!
+            const write_symbol_table = write_symbol_table: {
+                var result = self.modifiers.build_symbol_table;
+                if (!builtin.os.tag.isDarwin() and !self.created) {
+                    result = result and self.symbols.items.len != 0;
+                }
+                break :write_symbol_table result;
+            };
             if (write_symbol_table) {
                 const tracy_scope = traceNamed(@src(), "Write Symbol Table");
                 defer tracy_scope.end();
