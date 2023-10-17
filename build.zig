@@ -181,4 +181,15 @@ pub fn build(b: *std.build.Builder) !void {
         const run_tests = b.addRunArtifact(tests);
         test_step.dependOn(&run_tests.step);
     }
+
+    const test_new_step = b.step("test-new", "Run the new tests");
+    {
+        const dep = b.anonymousDependency("test", @import("test/archive_test.zig"), .{});
+        const dep_step = dep.builder.default_step;
+        // std.debug.print("{s}", .{dep.builder.dep_prefix});
+        std.debug.assert(mem.startsWith(u8, dep.builder.dep_prefix, "test."));
+        const dep_prefix_adjusted = dep.builder.dep_prefix["test.".len..];
+        dep_step.name = b.fmt("{s}{s}", .{ dep_prefix_adjusted, dep_step.name });
+        test_new_step.dependOn(dep_step);
+    }
 }
