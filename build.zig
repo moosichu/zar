@@ -14,6 +14,8 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const optimize = b.standardOptimizeOption(.{});
 
+    const test_filter = b.option([]const u8, "test-filter", "Filter tests by name");
+
     const exe = b.addExecutable(.{
         .name = "zar",
         .root_source_file = .{ .path = "src/main.zig" },
@@ -23,6 +25,7 @@ pub fn build(b: *std.build.Builder) !void {
     var tests = b.addTest(.{
         .root_source_file = .{ .path = "src/test.zig" },
         .target = target,
+        .filter = test_filter,
     });
 
     // TODO: Figure this out!

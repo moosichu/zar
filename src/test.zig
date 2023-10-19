@@ -48,7 +48,7 @@ test "Test Archive Text Basic" {
     const test1_symbols = no_symbols;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols);
+    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols, .{});
 }
 
 test "Test Archive Text With Long Filenames" {
@@ -60,7 +60,23 @@ test "Test Archive Text With Long Filenames" {
     const test2_symbols = no_symbols;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try doStandardTests(arena.allocator(), test2_dir, &test2_names, &test2_symbols);
+    try doStandardTests(arena.allocator(), test2_dir, &test2_names, &test2_symbols, .{});
+}
+
+test "Test MacOS aarch64" {
+    const test1_dir = "test/data/test_macos_aarch64";
+    const test1_names = [_][]const u8{"a.o"};
+    const test1_symbols = no_symbols;
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols, .{
+        .targets = &[_]Target{
+            .{
+                .architecture = .aarch64,
+                .operating_system = .macos,
+            },
+        },
+    });
 }
 
 test "Test Archive With Symbols Basic" {
@@ -70,7 +86,7 @@ test "Test Archive With Symbols Basic" {
     };
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test4_names, &test4_symbols);
+    try doStandardTests(arena.allocator(), no_dir, &test4_names, &test4_symbols, .{});
 }
 
 test "Test Archive With Long Names And Symbols" {
@@ -82,7 +98,7 @@ test "Test Archive With Long Names And Symbols" {
     };
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test5_names, &test5_symbols);
+    try doStandardTests(arena.allocator(), no_dir, &test5_names, &test5_symbols, .{});
 }
 
 test "Test Archive Stress Test" {
@@ -94,7 +110,7 @@ test "Test Archive Stress Test" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     try initialiseTestData(arena.allocator(), &test6_names, &test6_symbols, test6_symcount);
-    try doStandardTests(arena.allocator(), no_dir, &test6_names, &test6_symbols);
+    try doStandardTests(arena.allocator(), no_dir, &test6_names, &test6_symbols, .{});
 }
 
 test "Test Archive Sorted" {
@@ -117,7 +133,7 @@ test "Test Archive Sorted" {
     // TODO: remove redundancy maybe by excluding parsing component of this test?
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test_sort_names, &test_sort);
+    try doStandardTests(arena.allocator(), no_dir, &test_sort_names, &test_sort, .{});
 }
 
 test "Test Argument Errors" {
@@ -196,8 +212,16 @@ const Target = struct {
     architecture: Architecture,
     operating_system: OperatingSystem,
 
-    fn targetToArgument(comptime target: Target) []const u8 {
-        return @tagName(target.architecture) ++ "-" ++ @tagName(target.operating_system);
+    fn targetToArgument(target: Target) []const u8 {
+        switch (target.architecture) {
+            inline else => |architecture| {
+                switch (target.operating_system) {
+                    inline else => |operating_system| {
+                        return @tagName(architecture) ++ "-" ++ @tagName(operating_system);
+                    },
+                }
+            },
+        }
     }
 };
 
@@ -236,7 +260,7 @@ const LlvmFormat = enum {
     darwin,
     implicit,
 
-    fn llvmFormatToArgument(comptime format: LlvmFormat) []const u8 {
+    fn llvmFormatToArgument(format: LlvmFormat) []const u8 {
         switch (format) {
             .gnu => return "--format=gnu",
             .bsd => return "--format=bsd",
@@ -267,12 +291,18 @@ const TestDirInfo = struct {
     }
 };
 
-pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
+const StandardTestOptions = struct {
+    targets: ?[]const Target = null,
+};
+
+pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8, options: StandardTestOptions) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const operation = "rc";
 
-    inline for (targets) |target| {
+    const lTargets = if (options.targets) |dTargets| dTargets else &targets;
+
+    for (lTargets) |target| {
         var test_dir_info = try TestDirInfo.getInfo();
         // if a test is going to fail anyway, this is a useful way to debug it for now..
         var cancel_cleanup = false;
@@ -285,7 +315,7 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         // Create an archive with llvm ar & zar and confirm that the outputs match
         // byte-for-byte.
         try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
-        const llvm_format = comptime target.operating_system.toDefaultLlvmFormat();
+        const llvm_format = target.operating_system.toDefaultLlvmFormat();
         try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
         {
             errdefer {
@@ -341,7 +371,7 @@ fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
     }
 }
 
-fn testArchiveCreation(comptime format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -353,7 +383,7 @@ fn testArchiveCreation(comptime format: LlvmFormat, file_names: []const []const 
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, comptime format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
         logger.err("Failed to get zar to parse file generated with the format {}", .{format});
     }
@@ -512,7 +542,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     }
 }
 
-fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn doZarArchiveOperation(format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     const allocator = std.testing.allocator;
@@ -530,7 +560,7 @@ fn doZarArchiveOperation(comptime format: LlvmFormat, comptime operation: []cons
     try invokeZar(allocator, argv.items, test_dir_info, .{});
 }
 
-fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
+fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
         logger.err("Failed to run llvm ar operation {s} with the provided format: {}", .{ operation, format });
     }
@@ -560,7 +590,7 @@ fn doLlvmArchiveOperation(comptime format: LlvmFormat, comptime operation: []con
     }
 }
 
-fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, comptime target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
