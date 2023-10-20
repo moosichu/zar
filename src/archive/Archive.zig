@@ -25,6 +25,8 @@ const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
 const Allocator = std.mem.Allocator;
 
+arena: std.heap.ArenaAllocator,
+gpa: Allocator,
 dir: fs.Dir,
 file: fs.File,
 name: []const u8,
@@ -108,7 +110,7 @@ pub const Operation = enum {
 // messages at the point they are created, whereas unhandled errors do
 // not so the caller will need to print appropriate error messages
 // themselves (if needed at all).
-pub const UnhandledError = CreateError || ParseError || InsertError || DeleteError || FinalizeError || CriticalError;
+pub const UnhandledError = CreateError || ParseError || InsertError || DeleteError || FlushError || CriticalError;
 pub const HandledError = HandledIoError || error{
     UnknownFormat,
 };
@@ -130,7 +132,7 @@ pub const ParseError = error{
 
 pub const InsertError = error{};
 pub const DeleteError = error{};
-pub const FinalizeError = error{};
+pub const FlushError = error{};
 
 pub const CriticalError = error{
     OutOfMemory,
@@ -327,7 +329,8 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
     return .gnu;
 }
 
-pub fn create(
+pub fn init(
+    allocator: std.mem.Allocator,
     dir: fs.Dir,
     file: fs.File,
     name: []const u8,
@@ -336,6 +339,8 @@ pub fn create(
     created: bool,
 ) (CreateError || HandledIoError)!Archive {
     return Archive{
+        .gpa = allocator,
+        .arena = std.heap.ArenaAllocator.init(allocator),
         .dir = dir,
         .file = file,
         .name = name,
@@ -415,7 +420,8 @@ const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(s
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
-pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledIoError || CriticalError)!void {
+pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!void {
+    const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
     if (self.output_archive_type == .ambiguous) {
@@ -743,6 +749,10 @@ pub fn finalize(self: *Archive, allocator: Allocator) (FinalizeError || HandledI
     try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.file_pos));
 }
 
+pub fn deinit(self: *Archive) void {
+    self.arena.deinit();
+}
+
 pub fn deleteFiles(self: *Archive, file_names: []const []const u8) (DeleteError || HandledIoError || CriticalError)!void {
     const tracy = trace(@src());
     defer tracy.end();
@@ -837,10 +847,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 self.output_archive_type = .gnu;
             }
             var elf_file = Elf.Object{ .name = archived_file.name, .data = archived_file.contents.bytes };
-            defer elf_file.deinit(allocator);
+            defer elf_file.deinit(self.gpa);
 
             // TODO: Do not use builtin.target like this, be more flexible!
-            elf_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
+            elf_file.parse(self.gpa, builtin.cpu.arch) catch |err| switch (err) {
                 error.NotObject => break :blk,
                 error.OutOfMemory => return error.OutOfMemory,
                 error.TODOBigEndianSupport, error.TODOElf32bitSupport, error.EndOfStream => return error.TODO,
@@ -889,10 +899,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 };
 
                 var macho_file = MachO.Object{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
-                defer macho_file.deinit(allocator);
+                defer macho_file.deinit(self.gpa);
 
                 // TODO: Should be based on target cpu arch!
-                macho_file.parse(allocator, builtin.cpu.arch) catch |err| switch (err) {
+                macho_file.parse(self.gpa, builtin.cpu.arch) catch |err| switch (err) {
                     error.NotObject => break :blk,
                     error.OutOfMemory => return error.OutOfMemory,
                     error.UnsupportedCpuArchitecture, error.EndOfStream => return error.TODO,
@@ -935,7 +945,8 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     }
 }
 
-pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []const u8) (InsertError || HandledIoError || CriticalError)!void {
+pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError || HandledIoError || CriticalError)!void {
+    const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -1028,7 +1039,8 @@ pub fn insertFiles(self: *Archive, allocator: Allocator, file_names: []const []c
     }
 }
 
-pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError || CriticalError)!void {
+pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!void {
+    const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
     const reader = self.file.reader();
@@ -1094,6 +1106,9 @@ pub fn parse(self: *Archive, allocator: Allocator) (ParseError || HandledIoError
                 const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
 
                 string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
+                errdefer {
+                    allocator.free(string_table_contents);
+                }
 
                 try handleFileIoError(.reading, self.name, reader.readNoEof(string_table_contents));
                 break;
@@ -1541,7 +1556,7 @@ pub const MRIParser = struct {
                                 const file_names = try getTokenLine(allocator, &line_parser);
                                 defer allocator.free(file_names);
 
-                                try self.archive.?.insertFiles(allocator, file_names);
+                                try self.archive.?.insertFiles(file_names);
                             },
                             .list => {
                                 // TODO: verbose output
@@ -1558,15 +1573,16 @@ pub const MRIParser = struct {
                                 try self.archive.?.extract(file_names);
                             },
                             .save => {
-                                try self.archive.?.finalize(allocator);
+                                try self.archive.?.flush();
                             },
                             .clear => {
                                 // This is a bit of a hack but its reliable.
                                 // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
                                 const file = try handleFileIoError(.opening, self.file_name, self.dir.openFile(self.file_name.?, .{ .mode = .read_write }));
-                                self.archive = Archive.create(file, self.file_name.?);
+                                self.archive = Archive.init(file, self.file_name.?);
+                                defer self.archive.deinit();
 
-                                try self.archive.?.parse(allocator, stderr);
+                                try self.archive.?.parse(stderr);
                             },
                             .end => return,
                             else => {
@@ -1583,20 +1599,20 @@ pub const MRIParser = struct {
                                 const file_name = getToken(&line_parser).?;
 
                                 const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_write }));
-                                self.archive = Archive.create(file, file_name);
+                                self.archive = Archive.init(file, file_name);
                                 self.file_name = file_name;
 
-                                try self.archive.?.parse(allocator, stderr);
+                                try self.archive.?.parse(stderr);
                             },
                             .create, .createthin => {
                                 // TODO: Thin archives creation
                                 const file_name = getToken(&line_parser).?;
 
                                 const file = try self.dir.createFile(file_name, .{ .read = true });
-                                self.archive = Archive.create(file, file_name);
+                                self.archive = Archive.init(file, file_name);
                                 self.file_name = file_name;
 
-                                try self.archive.?.parse(allocator, stderr);
+                                try self.archive.?.parse(stderr);
                             },
                             .end => return,
                             else => {

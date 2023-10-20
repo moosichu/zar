@@ -46,9 +46,8 @@ test "Test Archive Text Basic" {
     const test1_dir = "test/data/test1";
     const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
     const test1_symbols = no_symbols;
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols, .{});
+    const allocator = std.testing.allocator;
+    try doStandardTests(allocator, test1_dir, &test1_names, &test1_symbols, .{});
 }
 
 test "Test Archive Text With Long Filenames" {
@@ -58,18 +57,16 @@ test "Test Archive Text With Long Filenames" {
     const test2_dir = "test/data/test2";
     const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
     const test2_symbols = no_symbols;
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), test2_dir, &test2_names, &test2_symbols, .{});
+    const allocator = std.testing.allocator;
+    try doStandardTests(allocator, test2_dir, &test2_names, &test2_symbols, .{});
 }
 
 test "Test MacOS aarch64" {
     const test1_dir = "test/data/test_macos_aarch64";
     const test1_names = [_][]const u8{"a.o"};
     const test1_symbols = no_symbols;
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), test1_dir, &test1_names, &test1_symbols, .{
+    const allocator = std.testing.allocator;
+    try doStandardTests(allocator, test1_dir, &test1_names, &test1_symbols, .{
         .targets = &[_]Target{
             .{
                 .architecture = .aarch64,
@@ -84,9 +81,8 @@ test "Test Archive With Symbols Basic" {
     const test4_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
     };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test4_names, &test4_symbols, .{});
+    var allocator = std.testing.allocator;
+    try doStandardTests(allocator, no_dir, &test4_names, &test4_symbols, .{});
 }
 
 test "Test Archive With Long Names And Symbols" {
@@ -96,9 +92,8 @@ test "Test Archive With Long Names And Symbols" {
         &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
         &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
     };
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test5_names, &test5_symbols, .{});
+    var allocator = std.testing.allocator;
+    try doStandardTests(allocator, no_dir, &test5_names, &test5_symbols, .{});
 }
 
 test "Test Archive Stress Test" {
@@ -110,7 +105,7 @@ test "Test Archive Stress Test" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     try initialiseTestData(arena.allocator(), &test6_names, &test6_symbols, test6_symcount);
-    try doStandardTests(arena.allocator(), no_dir, &test6_names, &test6_symbols, .{});
+    try doStandardTests(std.testing.allocator, no_dir, &test6_names, &test6_symbols, .{});
 }
 
 test "Test Archive Sorted" {
@@ -131,9 +126,8 @@ test "Test Archive Sorted" {
         &[_][]const u8{ "_11", "_12", "_13" },
     };
     // TODO: remove redundancy maybe by excluding parsing component of this test?
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    try doStandardTests(arena.allocator(), no_dir, &test_sort_names, &test_sort, .{});
+    var allocator = std.testing.allocator;
+    try doStandardTests(allocator, no_dir, &test_sort_names, &test_sort, .{});
 }
 
 test "Test Argument Errors" {
@@ -439,8 +433,9 @@ fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_i
 
     var testing_allocator = arena.allocator();
 
-    var archive = try Archive.create(test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
-    try archive.parse(testing_allocator);
+    var archive = try Archive.init(testing_allocator, test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
+    defer archive.deinit();
+    try archive.parse();
 
     var memory_buffer = try framework_allocator.alloc(u8, 1024 * 1024);
     defer framework_allocator.free(memory_buffer);
@@ -538,7 +533,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
         var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
         defer arena.deinit();
 
-        main.archiveMain(test_dir_info.tmp_dir.dir, arena.allocator(), arguments) catch {};
+        main.archiveMain(test_dir_info.tmp_dir.dir, allocator, arguments) catch {};
     }
 }
 
@@ -596,6 +591,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
 
     const worker_count = @max(1, std.Thread.getCpuCount() catch 1);
     const child_processes = try framework_allocator.alloc(std.ChildProcess, worker_count);
+    defer framework_allocator.free(child_processes);
 
     var argv = std.ArrayList([]const u8).init(framework_allocator);
     defer argv.deinit();

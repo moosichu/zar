@@ -321,10 +321,11 @@ pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_name
         try files.append(file_name);
     }
 
-    var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
-    try archive.parse(allocator);
-    try archive.insertFiles(allocator, files.items);
-    try archive.finalize(allocator);
+    var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+    defer archive.deinit();
+    try archive.parse();
+    try archive.insertFiles(files.items);
+    try archive.flush();
 }
 
 pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
@@ -534,27 +535,30 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
-            try archive.parse(allocator);
-            try archive.insertFiles(allocator, files.items);
-            try archive.finalize(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            defer archive.deinit();
+            try archive.parse();
+            try archive.insertFiles(files.items);
+            try archive.flush();
         },
         .delete => {
             var created = false;
             const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
-            try archive.parse(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            defer archive.deinit();
+            try archive.parse();
             try archive.deleteFiles(files.items);
-            try archive.finalize(allocator);
+            try archive.flush();
         },
         .print_names => {
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
-            try archive.parse(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            defer archive.deinit();
+            try archive.parse();
             for (archive.files.items) |parsed_file| {
                 stdout.print("{s}\n", .{parsed_file.name}) catch {};
             }
@@ -563,8 +567,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
-            try archive.parse(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            defer archive.deinit();
+            try archive.parse();
             for (archive.files.items) |parsed_file| {
                 parsed_file.contents.write(stdout, stderr) catch {};
             }
@@ -573,8 +578,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
-            try archive.parse(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            defer archive.deinit();
+            try archive.parse();
             for (archive.symbols.items) |symbol| {
                 if (modifiers.verbose) {
                     if (symbol.file_index == Archive.invalid_file_index) {
@@ -592,10 +598,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
-            try archive.parse(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            defer archive.deinit();
+            try archive.parse();
             try archive.moveFiles(files.items);
-            try archive.finalize(allocator);
+            try archive.flush();
         },
         .quick_append => {
             logger.err("quick append still needs to be implemented!\n", .{});
@@ -605,9 +612,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         .ranlib => {
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{ .mode = .read_write }));
             defer file.close();
-            var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, false);
-            try archive.parse(allocator);
-            try archive.finalize(allocator);
+            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            defer archive.deinit();
+            try archive.parse();
+            try archive.flush();
         },
         .extract => {
             logger.err("extract still needs to be implemented!\n", .{});
