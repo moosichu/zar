@@ -8,7 +8,7 @@ const mem = std.mem;
 const logger = std.log.scoped(.archive_main);
 const process = std.process;
 
-const Archive = @import("archive/Archive.zig");
+pub const Archive = @import("archive/Archive.zig");
 
 pub const zar_overview =
     \\Zig Archiver
@@ -111,7 +111,7 @@ pub const ranlib_error_prefix = "\x1B[1;31merror\x1B[0m: ";
 pub const full_zar_error_prefix = zar_overview ++ "\n" ++ zar_error_prefix;
 pub const full_ranlib_error_prefix = ranlib_overview ++ "\n" ++ ranlib_error_prefix;
 
-const version = build_options.version;
+const version = if (@hasField(build_options, "version")) build_options.version else "0.0.0";
 
 const version_details =
     \\zar {s} (https://github.com/moosichu/zar):
@@ -296,6 +296,35 @@ pub fn main() anyerror!void {
             logger.err("Unknown error occured.", .{});
         };
     };
+}
+
+pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
+    var modifiers: Archive.Modifiers = .{};
+    modifiers.build_symbol_table = true;
+    modifiers.create = true;
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+
+    var allocator = arena.allocator();
+
+    const cwd = fs.cwd();
+
+    var created = false;
+    const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
+    defer file.close();
+
+    var files = std.ArrayList([]const u8).init(allocator);
+    defer files.deinit();
+    for (file_names_ptr) |file_name_z| {
+        const file_name = file_name_z[0..std.mem.len(file_name_z)];
+        try files.append(file_name);
+    }
+
+    var archive = try Archive.create(cwd, file, archive_path, archive_type, modifiers, created);
+    try archive.parse(allocator);
+    try archive.insertFiles(allocator, files.items);
+    try archive.finalize(allocator);
 }
 
 pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
