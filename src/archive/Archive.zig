@@ -10,10 +10,10 @@ const fs = std.fs;
 const mem = std.mem;
 const logger = std.log.scoped(.archive);
 const elf = std.elf;
-const Elf = @import("Zld").Elf;
-const MachO = @import("Zld").MachO;
+const Elf = @import("zld/Zld.zig").Elf;
+const MachO = @import("zld/Zld.zig").MachO;
 const macho = std.macho;
-const Coff = @import("Zld").Coff;
+const Coff = @import("zld/Zld.zig").Coff;
 // We don't have any kind of bitcode parsing support at the moment, but we need
 // to report dealing with bitcode files as an error. So embed magic like this
 // matching the format of the actual zld package for now.
@@ -117,7 +117,7 @@ pub const HandledError = HandledIoError || error{
 
 // We can set this to true just to make Handled errors are actually handled at
 // comptime!
-pub const test_errors_handled = build_options.test_errors_handled;
+pub const test_errors_handled = if (@hasField(build_options, "test_errors_handled")) build_options.test_errors_handled else false;
 
 pub const HandledIoError = if (test_errors_handled) error{Handled} else IoError;
 
@@ -321,8 +321,10 @@ pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, 
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    if (build_options.mimmick_broken_cross_compiled_llvm_ar_behaviour) {
-        return .gnu;
+    if (@hasField(build_options, "mimmick_broken_cross_compiled_llvm_ar_behaviour")) {
+        if (build_options.mimmick_broken_cross_compiled_llvm_ar_behaviour) {
+            return .gnu;
+        }
     }
 
     if (builtin.os.tag.isDarwin()) return .darwin;

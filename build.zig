@@ -41,13 +41,13 @@ pub fn build(b: *std.build.Builder) !void {
     const exe_options = b.addOptions();
     const options_module = exe_options.createModule();
 
-    const zld = b.createModule(.{
-        .source_file = .{ .path = "zld/src/Zld.zig" },
-        .dependencies = &[_]std.build.ModuleDependency{.{ .name = "build_options", .module = options_module }},
-    });
+    // const zld = b.createModule(.{
+    //     .source_file = .{ .path = "zld/src/Zld.zig" },
+    //     .dependencies = &[_]std.build.ModuleDependency{.{ .name = "build_options", .module = options_module }},
+    // });
 
-    exe.addModule("Zld", zld);
-    tests.addModule("Zld", zld);
+    // exe.addModule("Zld", zld);
+    // tests.addModule("Zld", zld);
 
     exe.addModule("build_options", options_module);
     tests.addModule("build_options", options_module);
