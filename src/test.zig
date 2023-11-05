@@ -510,7 +510,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     invoke_as_child_process = invoke_as_child_process or expected_out.stderr != null;
     invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
     if (invoke_as_child_process) {
-        const result = try std.ChildProcess.exec(.{
+        const result = try std.ChildProcess.run(.{
             .allocator = allocator,
             .argv = arguments,
             .cwd = test_dir_info.cwd,
@@ -573,7 +573,7 @@ fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fi
     try argv.append(llvm_ar_archive_name);
     try argv.appendSlice(file_names);
 
-    const result = try std.ChildProcess.exec(.{
+    const result = try std.ChildProcess.run(.{
         .allocator = allocator,
         .argv = argv.items,
         .cwd = test_dir_info.cwd,

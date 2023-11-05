@@ -72,7 +72,7 @@ pub fn build(b: *std.build.Builder) !void {
         }
         const version_string = b.fmt("{d}.{d}.{d}", .{ zar_version.major, zar_version.minor, zar_version.patch });
         var code: u8 = undefined;
-        const git_describe_untrimmed = b.execAllowFail(&[_][]const u8{
+        const git_describe_untrimmed = b.runAllowFail(&[_][]const u8{
             "git", "-C", b.build_root.path.?, "describe", "--match", "*.*.*", "--tags",
         }, &code, .Ignore) catch {
             break :v version_string;

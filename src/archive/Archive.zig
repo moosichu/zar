@@ -24,6 +24,7 @@ const coff = std.coff;
 const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
 const Allocator = std.mem.Allocator;
+const allocator_limit = 10000000;
 
 arena: std.heap.ArenaAllocator,
 gpa: Allocator,
@@ -562,9 +563,17 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     const tracy_scope_inner = traceNamed(@src(), "Write Symbol Count");
                     defer tracy_scope_inner.end();
                     if (format == .gnu64) {
-                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u64, @as(u64, @intCast(self.symbols.items.len))));
+                        try handleFileIoError(.writing, self.name, writer.writeInt(
+                            u64,
+                            @as(u64, @intCast(self.symbols.items.len)),
+                            .big,
+                        ));
                     } else {
-                        try handleFileIoError(.writing, self.name, writer.writeIntBig(u32, @as(u32, @intCast(self.symbols.items.len))));
+                        try handleFileIoError(.writing, self.name, writer.writeInt(
+                            u32,
+                            @as(u32, @intCast(self.symbols.items.len)),
+                            .big,
+                        ));
                     }
                 }
 
@@ -594,9 +603,17 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                     for (self.symbols.items) |symbol| {
                         if (format == .gnu64) {
-                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i64, relative_file_offsets[symbol.file_index] + @as(i64, @intCast(offset_to_files))));
+                            try handleFileIoError(.writing, self.name, writer.writeInt(
+                                i64,
+                                relative_file_offsets[symbol.file_index] + @as(i64, @intCast(offset_to_files)),
+                                .big,
+                            ));
                         } else {
-                            try handleFileIoError(.writing, self.name, writer.writeIntBig(i32, relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files))));
+                            try handleFileIoError(.writing, self.name, writer.writeInt(
+                                i32,
+                                relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files)),
+                                .big,
+                            ));
                         }
                     }
                 }
@@ -861,7 +878,9 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
             for (elf_file.symtab.items) |sym| {
                 switch (sym.st_info >> 4) {
                     elf.STB_WEAK, elf.STB_GLOBAL => {
-                        if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF)) {
+                        if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF) or
+                            ((sym.st_shndx == elf.SHN_UNDEF) and (sym.st_value != 0)))
+                        {
                             const symbol = Symbol{
                                 .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
                                 .file_index = file_index,
@@ -1106,6 +1125,9 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 const string_table_num_bytes_string = first_line_buffer[48..58];
                 const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
+                // if (string_table_num_bytes > allocator_limit) {
+                //     @panic("OOM!");
+                // }
 
                 string_table_contents = try allocator.alloc(u8, string_table_num_bytes);
                 errdefer {
@@ -1127,13 +1149,13 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
                 const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                const num_symbols = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
+                const num_symbols = try handleFileIoError(.reading, self.name, reader.readInt(u32, .big));
 
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
                 for (number_array, 0..) |_, number_index| {
-                    number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .Big));
+                    number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .big));
                 }
                 defer allocator.free(number_array);
 
@@ -1347,7 +1369,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 if (magic_match) {
                     // TODO: make this target arch endianess
-                    const endianess = .Little;
+                    const endianess = .little;
 
                     {
                         const current_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
