@@ -131,7 +131,7 @@ pub fn build(b: *std.Build) !void {
 
                 const ancestor_ver = try std.SemanticVersion.parse(tagged_ancestor);
                 if (zar_version.order(ancestor_ver) != .gt) {
-                    std.debug.print("Zig version '{}' must be greater than tagged ancestor '{}'\n", .{ zar_version, ancestor_ver });
+                    std.debug.print("Zig version '{f}' must be greater than tagged ancestor '{f}'\n", .{ zar_version, ancestor_ver });
                     std.process.exit(1);
                 }
 
