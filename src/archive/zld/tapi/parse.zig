@@ -34,15 +34,15 @@ pub const Node = struct {
         if (self.tag != T.base_tag) {
             return null;
         }
-        return @fieldParentPtr(T, "base", self);
+        return @fieldParentPtr("base", self);
     }
 
     pub fn deinit(self: *Node, allocator: Allocator) void {
         switch (self.tag) {
-            .doc => @fieldParentPtr(Node.Doc, "base", self).deinit(allocator),
-            .map => @fieldParentPtr(Node.Map, "base", self).deinit(allocator),
-            .list => @fieldParentPtr(Node.List, "base", self).deinit(allocator),
-            .value => @fieldParentPtr(Node.Value, "base", self).deinit(allocator),
+            .doc => @as(Node.Doc, @fieldParentPtr("base", self)).deinit(allocator),
+            .map => @as(Node.Map, @fieldParentPtr("base", self)).deinit(allocator),
+            .list => @as(Node.List, @fieldParentPtr("base", self)).deinit(allocator),
+            .value => @as(Node.Value, @fieldParentPtr("base", self)).deinit(allocator),
         }
     }
 
@@ -53,10 +53,10 @@ pub const Node = struct {
         writer: anytype,
     ) !void {
         return switch (self.tag) {
-            .doc => @fieldParentPtr(Node.Doc, "base", self).format(fmt, options, writer),
-            .map => @fieldParentPtr(Node.Map, "base", self).format(fmt, options, writer),
-            .list => @fieldParentPtr(Node.List, "base", self).format(fmt, options, writer),
-            .value => @fieldParentPtr(Node.Value, "base", self).format(fmt, options, writer),
+            .doc => @as(Node.Doc, @fieldParentPtr("base", self)).format(fmt, options, writer),
+            .map => @as(Node.Map, @fieldParentPtr("base", self)).format(fmt, options, writer),
+            .list => @as(Node.List, @fieldParentPtr("base", self)).format(fmt, options, writer),
+            .value => @as(Node.Value, @fieldParentPtr("base", self)).format(fmt, options, writer),
         };
     }
 
