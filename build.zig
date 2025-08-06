@@ -72,7 +72,6 @@ pub fn build(b: *std.Build) !void {
 
     const exe_options = b.addOptions();
     const options_module = exe_options.createModule();
-    _ = options_module;
 
     // const zld = b.createModule(.{
     //     .source_file = .{ .path = "zld/src/Zld.zig" },
@@ -83,8 +82,8 @@ pub fn build(b: *std.Build) !void {
     // tests.addModule("Zld", zld);
 
     // FIXME
-    //exe.addModule("build_options", options_module);
-    //tests.addModule("build_options", options_module);
+    exe_mod.addImport("build_options", options_module);
+    test_mod.addImport("build_options", options_module);
 
     {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
