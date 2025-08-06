@@ -957,7 +957,7 @@ pub const Instruction = union(enum) {
         };
     }
 
-    fn bitfield(
+    fn bitfield_(
         opc: u2,
         n: u1,
         rd: Register,
@@ -1467,7 +1467,7 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b00, n, rd, rn, immr, imms);
+        return bitfield_(0b00, n, rd, rn, immr, imms);
     }
 
     pub fn bfm(rd: Register, rn: Register, immr: u6, imms: u6) Instruction {
@@ -1476,7 +1476,7 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b01, n, rd, rn, immr, imms);
+        return bitfield_(0b01, n, rd, rn, immr, imms);
     }
 
     pub fn ubfm(rd: Register, rn: Register, immr: u6, imms: u6) Instruction {
@@ -1485,7 +1485,7 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b10, n, rd, rn, immr, imms);
+        return bitfield_(0b10, n, rd, rn, immr, imms);
     }
 
     pub fn asrImmediate(rd: Register, rn: Register, shift: u6) Instruction {
