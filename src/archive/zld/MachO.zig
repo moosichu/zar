@@ -18,7 +18,7 @@ const dead_strip = @import("MachO/dead_strip.zig");
 const eh_frame = @import("MachO/eh_frame.zig");
 const fat = @import("MachO/fat.zig");
 const load_commands = @import("MachO/load_commands.zig");
-const thunks = @import("MachO/thunks.zig");
+const thunks_ = @import("MachO/thunks.zig");
 const trace = @import("tracy.zig").trace;
 
 const Allocator = mem.Allocator;
@@ -98,8 +98,8 @@ got_table: std.AutoHashMapUnmanaged(SymbolWithLoc, u32) = .{},
 stubs: std.ArrayListUnmanaged(IndirectPointer) = .{},
 stubs_table: std.AutoHashMapUnmanaged(SymbolWithLoc, u32) = .{},
 
-thunk_table: std.AutoHashMapUnmanaged(AtomIndex, thunks.ThunkIndex) = .{},
-thunks: std.ArrayListUnmanaged(thunks.Thunk) = .{},
+thunk_table: std.AutoHashMapUnmanaged(AtomIndex, thunks_.ThunkIndex) = .{},
+thunks: std.ArrayListUnmanaged(thunks_.Thunk) = .{},
 
 atoms: std.ArrayListUnmanaged(Atom) = .{},
 
