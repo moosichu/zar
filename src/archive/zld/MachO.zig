@@ -2012,7 +2012,7 @@ fn writeAtoms(self: *MachO) !void {
                             try self.writeStubHelperCode(atom_index, buffer.writer());
                         } else if (header.isCode()) {
                             // A thunk
-                            try thunks.writeThunkCode(self, atom_index, buffer.writer());
+                            try thunks_.writeThunkCode(self, atom_index, buffer.writer());
                         } else unreachable;
                     },
                 }
@@ -2130,7 +2130,7 @@ fn calcSectionSizes(self: *MachO) !void {
             if (mem.eql(u8, header.sectName(), "__stub_helper")) continue;
 
             // Create jump/branch range extenders if needed.
-            try thunks.createThunks(self, @as(u8, @intCast(sect_id)));
+            try thunks_.createThunks(self, @as(u8, @intCast(sect_id)));
         }
     }
 }
