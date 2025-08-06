@@ -1030,17 +1030,17 @@ pub fn getOutputSection(self: *MachO, sect: macho.section_64) !?u8 {
                     {
                         break :blk self.getSectionByName("__DATA_CONST", sectname) orelse
                             try self.initSection(
-                            "__DATA_CONST",
-                            sectname,
-                            .{},
-                        );
+                                "__DATA_CONST",
+                                sectname,
+                                .{},
+                            );
                     } else if (mem.eql(u8, sectname, "__data")) {
                         break :blk self.getSectionByName("__DATA", "__data") orelse
                             try self.initSection(
-                            "__DATA",
-                            "__data",
-                            .{},
-                        );
+                                "__DATA",
+                                "__data",
+                                .{},
+                            );
                     }
                 }
                 break :blk self.getSectionByName(segname, sectname) orelse try self.initSection(
@@ -1093,8 +1093,8 @@ pub fn createGotAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__DATA_CONST", "__got") orelse
         try self.initSection("__DATA_CONST", "__got", .{
-        .flags = macho.S_NON_LAZY_SYMBOL_POINTERS,
-    });
+            .flags = macho.S_NON_LAZY_SYMBOL_POINTERS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -1179,10 +1179,10 @@ fn createStubHelperPreambleAtom(self: *MachO) !void {
 
     const sect_id = self.getSectionByName("__TEXT", "__stub_helper") orelse
         try self.initSection("__TEXT", "__stub_helper", .{
-        .flags = macho.S_REGULAR |
-            macho.S_ATTR_PURE_INSTRUCTIONS |
-            macho.S_ATTR_SOME_INSTRUCTIONS,
-    });
+            .flags = macho.S_REGULAR |
+                macho.S_ATTR_PURE_INSTRUCTIONS |
+                macho.S_ATTR_SOME_INSTRUCTIONS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.stub_helper_preamble_sym_index = sym_index;
@@ -1324,8 +1324,8 @@ pub fn createLazyPointerAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__DATA", "__la_symbol_ptr") orelse
         try self.initSection("__DATA", "__la_symbol_ptr", .{
-        .flags = macho.S_LAZY_SYMBOL_POINTERS,
-    });
+            .flags = macho.S_LAZY_SYMBOL_POINTERS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -1370,11 +1370,11 @@ pub fn createStubAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__TEXT", "__stubs") orelse
         try self.initSection("__TEXT", "__stubs", .{
-        .flags = macho.S_SYMBOL_STUBS |
-            macho.S_ATTR_PURE_INSTRUCTIONS |
-            macho.S_ATTR_SOME_INSTRUCTIONS,
-        .reserved2 = stub_size,
-    });
+            .flags = macho.S_SYMBOL_STUBS |
+                macho.S_ATTR_PURE_INSTRUCTIONS |
+                macho.S_ATTR_SOME_INSTRUCTIONS,
+            .reserved2 = stub_size,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -2365,7 +2365,7 @@ fn writeSegmentHeaders(self: *MachO, writer: anytype) !void {
 
         if (out_seg.nsects == 0 and
             (mem.eql(u8, out_seg.segName(), "__DATA_CONST") or
-            mem.eql(u8, out_seg.segName(), "__DATA"))) continue;
+                mem.eql(u8, out_seg.segName(), "__DATA"))) continue;
 
         try writer.writeStruct(out_seg);
         for (self.sections.items(.header)[indexes.start..indexes.end]) |header| {
