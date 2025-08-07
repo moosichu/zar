@@ -1004,7 +1004,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             gid = file_stats.gid;
             uid = file_stats.uid;
             const mtime_full = file_stats.mtime();
-            mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
+            mtime = mtime_full.sec * std.time.ns_per_s + mtime_full.nsec;
             size = @as(u64, @intCast(file_stats.size));
             mode = file_stats.mode;
         }
