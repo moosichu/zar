@@ -312,7 +312,7 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
 
 // The weird return type is so that we can distinguish between handled and unhandled IO errors,
 // i.e. if test_errors_handled is set to true, and raw calls to io operations will return in a compile failure
-pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) HandledIoError!@typeInfo(@TypeOf(err_result)).ErrorUnion.payload {
+pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) HandledIoError!@typeInfo(@TypeOf(err_result)).error_union.payload {
     const unwrapped_result = err_result catch |err| {
         return printFileIoError(context, file_name, err);
     };
