@@ -172,7 +172,7 @@ test "Test Argument Errors" {
     }
 }
 
-fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
+fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: [][][]u8, symbol_count: u32) !void {
     for (file_names, 0..) |_, index| {
         file_names[index] = try std.fmt.allocPrint(allocator, "index_{}.o", .{index});
     }
