@@ -999,7 +999,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             size = file_stats.size;
             mode = file_stats.mode;
         } else {
-            const file_stats = try handleFileIoError(.stat, file_name, std.os.fstat(file.handle));
+            const file_stats = try handleFileIoError(.stat, file_name, std.posix.fstat(file.handle));
 
             gid = file_stats.gid;
             uid = file_stats.uid;
