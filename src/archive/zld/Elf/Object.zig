@@ -240,7 +240,7 @@ pub fn splitIntoAtoms(self: *Object, allocator: Allocator, object_id: u16, elf_f
             try self.atom_table.putNoClobber(allocator, atom.sym_index, atom);
 
             var code = if (shdr.sh_type == elf.SHT_NOBITS) blk: {
-                var code = try allocator.alloc(u8, atom.size);
+                const code = try allocator.alloc(u8, atom.size);
                 @memset(code, 0);
                 break :blk code;
             } else try allocator.dupe(u8, self.getShdrContents(ndx));

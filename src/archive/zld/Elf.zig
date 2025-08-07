@@ -896,7 +896,7 @@ pub fn createGotAtom(self: *Elf, target: SymbolWithLoc) !*Atom {
     atom.size = @sizeOf(u64);
     atom.alignment = @alignOf(u64);
 
-    var code = try self.base.allocator.alloc(u8, @sizeOf(u64));
+    const code = try self.base.allocator.alloc(u8, @sizeOf(u64));
     defer self.base.allocator.free(code);
     @memset(code, 0);
     try atom.code.appendSlice(self.base.allocator, code);

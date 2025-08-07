@@ -288,7 +288,7 @@ pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
         return err;
     } else {
@@ -314,7 +314,7 @@ pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_name
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
 
     const cwd = fs.cwd();
 

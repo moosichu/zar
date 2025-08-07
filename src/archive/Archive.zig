@@ -1390,13 +1390,13 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     // TODO: error if this doesn't divide properly?
                     // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
 
-                    var ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
+                    const ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
 
                     // TODO: error handling
                     _ = try handleFileIoError(.reading, self.name, reader.read(ranlib_bytes));
                     seek_forward_amount = seek_forward_amount - @as(u32, @intCast(num_ranlib_bytes));
 
-                    var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
+                    const ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
                     const symbol_strings_length = try handleFileIoError(.reading, self.name, reader.readInt(u32, endianess));
                     // TODO: We don't really need this information, but maybe it could come in handy
@@ -1573,7 +1573,7 @@ pub const MRIParser = struct {
             var line_parser = mem.split(u8, line, " ");
 
             if (getToken(&line_parser)) |tok| {
-                var command_name = try allocator.dupe(u8, tok);
+                const command_name = try allocator.dupe(u8, tok);
                 defer allocator.free(command_name);
 
                 _ = std.ascii.lowerString(command_name, tok);

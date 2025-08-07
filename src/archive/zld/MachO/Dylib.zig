@@ -193,7 +193,7 @@ pub fn parseFromBinary(
             .REEXPORT_DYLIB => {
                 if (should_lookup_reexports) {
                     // Parse install_name to dependent dylib.
-                    var id = try Id.fromLoadCommand(
+                    const id = try Id.fromLoadCommand(
                         allocator,
                         cmd.cast(macho.dylib_command).?,
                         cmd.getDylibPathName(),
@@ -408,7 +408,7 @@ pub fn parseFromStub(
 
                                 log.debug("  (found re-export '{s}')", .{lib});
 
-                                var dep_id = try Id.default(allocator, lib);
+                                const dep_id = try Id.default(allocator, lib);
                                 try dependent_libs.writeItem(.{ .id = dep_id, .parent = dylib_id });
                             }
                         }
@@ -525,7 +525,7 @@ pub fn parseFromStub(
 
                     log.debug("  (found re-export '{s}')", .{lib});
 
-                    var dep_id = try Id.default(allocator, lib);
+                    const dep_id = try Id.default(allocator, lib);
                     try dependent_libs.writeItem(.{ .id = dep_id, .parent = dylib_id });
                 }
             }

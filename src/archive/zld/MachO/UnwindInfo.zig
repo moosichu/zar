@@ -410,7 +410,7 @@ pub fn collect(info: *UnwindInfo, macho_file: *MachO) !void {
             gop.value_ptr.count += 1;
         }
 
-        var slice = common_encodings_counts.values();
+        const slice = common_encodings_counts.values();
         std.sort.sort(CommonEncWithCount, slice, {}, CommonEncWithCount.greaterThan);
 
         var i: u7 = 0;
