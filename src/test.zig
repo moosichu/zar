@@ -81,7 +81,7 @@ test "Test Archive With Symbols Basic" {
     const test4_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
     };
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test4_names, &test4_symbols, .{});
 }
 
@@ -92,7 +92,7 @@ test "Test Archive With Long Names And Symbols" {
         &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
         &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
     };
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test5_names, &test5_symbols, .{});
 }
 
@@ -126,7 +126,7 @@ test "Test Archive Sorted" {
         &[_][]const u8{ "_11", "_12", "_13" },
     };
     // TODO: remove redundancy maybe by excluding parsing component of this test?
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test_sort_names, &test_sort, .{});
 }
 
@@ -188,10 +188,11 @@ fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_nam
 const targets = result: {
     const os_fields = std.meta.fields(OperatingSystem);
     const arch_fields = std.meta.fields(Architecture);
-    comptime var aggregator: [os_fields.len * arch_fields.len]Target = undefined;
-    comptime var target_index = 0;
-    inline for (os_fields) |os_field| {
-        inline for (arch_fields) |arch_field| {
+    var aggregator: [os_fields.len * arch_fields.len]Target = undefined;
+    var target_index = 0;
+    // "for"s were inline
+    for (os_fields) |os_field| {
+        for (arch_fields) |arch_field| {
             aggregator[target_index] = .{
                 .architecture = @as(Architecture, @enumFromInt(arch_field.value)),
                 .operating_system = @as(OperatingSystem, @enumFromInt(os_field.value)),
@@ -241,8 +242,8 @@ const Architecture = enum {
 
 const llvm_formats = result: {
     const fields = std.meta.fields(LlvmFormat);
-    comptime var aggregator: [fields.len]LlvmFormat = undefined;
-    inline for (fields, 0..) |field, field_index| {
+    var aggregator: [fields.len]LlvmFormat = undefined;
+    for (fields, 0..) |field, field_index| {
         aggregator[field_index] = @as(LlvmFormat, @enumFromInt(field.value));
     }
     break :result aggregator;
@@ -431,7 +432,7 @@ fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_i
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var testing_allocator = arena.allocator();
+    const testing_allocator = arena.allocator();
 
     var archive = try Archive.init(testing_allocator, test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
     defer archive.deinit();
