@@ -178,6 +178,11 @@ pub const IoError = error{
     SharingViolation,
     SymLinkLoop,
     SystemFdQuotaExceeded,
+    InvalidWtf8,
+    AntivirusInterference,
+    ProcessNotFound,
+    SocketNotConnected,
+    Canceled,
 };
 
 // All archive files start with this magic string
@@ -394,7 +399,7 @@ pub fn buildSymbolTable(
     symbol_table_size = 0;
 
     for (self.symbols.items) |symbol| {
-        mem.copy(u8, symbol_table[symbol_table_size..(symbol.name.len + symbol_table_size)], symbol.name);
+        @memcpy(symbol_table[symbol_table_size..(symbol.name.len + symbol_table_size)], symbol.name);
         symbol_table[symbol_table_size + symbol.name.len] = 0;
         symbol_table_size += symbol.name.len + 1;
     }
@@ -1440,7 +1445,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             trimmed_archive_name = mem.trim(u8, archive_name_buffer, "\x00");
         } else {
             const archive_name_buffer = try allocator.alloc(u8, trimmed_archive_name.len);
-            mem.copy(u8, archive_name_buffer, trimmed_archive_name);
+            @memcpy(archive_name_buffer, trimmed_archive_name);
             trimmed_archive_name = archive_name_buffer;
         }
 
