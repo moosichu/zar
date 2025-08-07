@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
 
-const path_to_zar = "../../../zig-out/bin/zar";
+const path_to_zar = "../zig-out/bin/zar";
 
 const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
@@ -275,7 +275,7 @@ const TestDirInfo = struct {
             .cwd = undefined,
         };
         result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
-            "zig-cache", "tmp", &result.tmp_dir.sub_path,
+            ".zig-cache", "tmp", &result.tmp_dir.sub_path,
         });
         return result;
     }
