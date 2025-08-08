@@ -11,7 +11,7 @@ const Allocator = std.mem.Allocator;
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
 
-const path_to_zar = "../zig-out/bin/zar";
+const path_to_zar = "../../../zig-out/bin/zar";
 
 const llvm_ar_archive_name = "llvm-ar-archive.a";
 const zig_ar_archive_name = "zig-ar-archive.a";
@@ -304,7 +304,7 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         defer if (!cancel_cleanup) test_dir_info.cleanup();
         errdefer |err| {
             cancel_cleanup = true;
-            logger.err("Failed to do archiving operation with files for target ({s}): {}", .{target.targetToArgument(), err});
+            logger.err("Failed to do archiving operation with files for target ({s}): {}", .{ target.targetToArgument(), err });
         }
 
         // Create an archive with llvm ar & zar and confirm that the outputs match
@@ -314,7 +314,7 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
         {
             errdefer |err| {
-                logger.err("Tests failed with explicitly provided archive format ({}): {}", .{llvm_format, err});
+                logger.err("Tests failed with explicitly provided archive format ({}): {}", .{ llvm_format, err });
             }
             // Create an archive explicitly with the format for the target operating system
             try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
@@ -371,7 +371,7 @@ fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_
     defer tracy.end();
 
     errdefer |err| {
-        logger.err("Failed create archive with zar that matched llvm with target format ({}): {}", .{format, err});
+        logger.err("Failed create archive with zar that matched llvm with target format ({}): {}", .{ format, err });
     }
     const operation = "rc";
     try doZarArchiveOperation(format, operation, file_names, test_dir_info);
@@ -380,7 +380,7 @@ fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_
 
 fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer |err| {
-        logger.err("Failed to get zar to parse file generated with the format ({}): {}", .{format, err});
+        logger.err("Failed to get zar to parse file generated with the format ({}): {}", .{ format, err });
     }
 
     try testArchiveParsing(target, framework_allocator, test_dir_info, file_names, symbol_names);
@@ -504,6 +504,9 @@ const ExpectedOut = struct {
 };
 
 fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_info: TestDirInfo, expected_out: ExpectedOut) !void {
+    errdefer |err| {
+        logger.err("test failure: {}", .{err});
+    }
     // argments[0] must be path_to_zar
     var invoke_as_child_process = always_invoke_zar_as_child_process;
     // At the moment it's easiest to verify the output of stdout/stderr by launching
@@ -511,6 +514,9 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     invoke_as_child_process = invoke_as_child_process or expected_out.stderr != null;
     invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
     if (invoke_as_child_process) {
+        errdefer |err| {
+            logger.err("{}: {s} {s}", .{ err, arguments, test_dir_info.cwd });
+        }
         const result = try std.process.Child.run(.{
             .allocator = allocator,
             .argv = arguments,
@@ -524,9 +530,15 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
 
         if (expected_out.stdout) |expected_stdout| {
             try testing.expectEqualStrings(expected_stdout, result.stdout);
+            errdefer |err| {
+                logger.err("{}, also received stdout \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stdout });
+            }
         }
         if (expected_out.stderr) |expected_stderr| {
             try testing.expectEqualStrings(expected_stderr, result.stderr);
+            errdefer |err| {
+                logger.err("{}, also received stderr \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stderr });
+            }
         }
     } else {
         // TODO: don't deinit testing allocator here so that we can confirm
