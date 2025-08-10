@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const test_filter = b.option([]const u8, "test-filter", "Filter tests by name");
-    _ = test_filter;
 
     const exe_mod = b.addModule("zar", .{
         .root_source_file = .{ .src_path = .{ .owner = b, .sub_path = "src/main.zig" } },
@@ -33,7 +32,7 @@ pub fn build(b: *std.Build) !void {
     const exe = b.addExecutable(.{ .name = "zar", .root_module = exe_mod, .version = zar_version });
     var tests = b.addTest(.{
         .root_module = test_mod,
-        //.filters = test_filter, // FIXME
+        .filters = if (test_filter != null) &.{test_filter.?} else &.{},
     });
 
     // TODO: Figure this out!
