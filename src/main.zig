@@ -139,19 +139,12 @@ fn printHelp(stdout: fs.File.Writer) void {
 
 fn printVersion(stdout: fs.File.Writer) void {
     const target = builtin.target;
-    const default_archive_type = @tagName(
-        Archive.getDefaultArchiveTypeFromHost()
-    );
-    stdout.print(version_details, .{ 
-        @tagName(mode), version, @tagName(builtin.mode), 
-        default_archive_type, 
-        @tagName(target.cpu.arch), @tagName(target.os.tag), 
-        @tagName(target.abi) }
-    ) catch {};
+    const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
+    stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
 }
 
 // For the release standalone program,
-// we just want to display concise errors to the end-user, 
+// we just want to display concise errors to the end-user,
 // but during development we want them to show up as part of
 // the regular logging flow.
 pub fn log(

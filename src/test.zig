@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
+const build_options = @import("build_options");
 
 const path_to_zar = "../../../zig-out/bin/zar";
 
@@ -426,7 +427,16 @@ fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_i
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
 
-    const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only });
+    const archive_file = test_dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only }) catch |err| {
+        logger.err("Failed to open archive file {s} in cwd {s}, full path: {s}/{s}, err {}", .{
+            llvm_ar_archive_name,
+            test_dir_info.cwd,
+            llvm_ar_archive_name,
+            test_dir_info.cwd,
+            err,
+        });
+        return err;
+    };
     defer archive_file.close();
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -578,7 +588,7 @@ fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fi
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
-    try argv.append("zig");
+    try argv.append(build_options.zig_exe_path);
     try argv.append("ar");
     try argv.append(format.llvmFormatToArgument());
 
@@ -591,6 +601,10 @@ fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fi
         .argv = argv.items,
         .cwd = test_dir_info.cwd,
     });
+
+    if (result.stderr.len > 0) {
+        logger.err("llvm ar operation failed with: {s}", .{result.stderr});
+    }
 
     defer {
         allocator.free(result.stdout);
@@ -608,7 +622,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
 
     var argv = std.ArrayList([]const u8).init(framework_allocator);
     defer argv.deinit();
-    try argv.append("zig");
+    try argv.append(build_options.zig_exe_path);
     try argv.append("cc");
     try argv.append("-c");
     try argv.append("-o");
