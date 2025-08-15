@@ -7,7 +7,8 @@ const mem = std.mem;
 const process = std.process;
 
 const Allocator = mem.Allocator;
-const CrossTarget = std.zig.CrossTarget;
+//const CrossTarget = std.zig.CrossTarget;
+const CrossTarget = std.Target.Query;
 const Elf = @import("../Elf.zig");
 const Zld = @import("../Zld.zig");
 

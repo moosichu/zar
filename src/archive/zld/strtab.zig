@@ -5,7 +5,7 @@ const Allocator = mem.Allocator;
 const StringIndexAdapter = std.hash_map.StringIndexAdapter;
 const StringIndexContext = std.hash_map.StringIndexContext;
 
-pub fn StringTable(comptime log_scope: @Type(.EnumLiteral)) type {
+pub fn StringTable(comptime log_scope: @Type(.enum_literal)) type {
     return struct {
         const Self = @This();
 

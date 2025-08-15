@@ -178,6 +178,11 @@ pub const IoError = error{
     SharingViolation,
     SymLinkLoop,
     SystemFdQuotaExceeded,
+    InvalidWtf8,
+    AntivirusInterference,
+    ProcessNotFound,
+    SocketNotConnected,
+    Canceled,
 };
 
 // All archive files start with this magic string
@@ -312,7 +317,7 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
 
 // The weird return type is so that we can distinguish between handled and unhandled IO errors,
 // i.e. if test_errors_handled is set to true, and raw calls to io operations will return in a compile failure
-pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) HandledIoError!@typeInfo(@TypeOf(err_result)).ErrorUnion.payload {
+pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) HandledIoError!@typeInfo(@TypeOf(err_result)).error_union.payload {
     const unwrapped_result = err_result catch |err| {
         return printFileIoError(context, file_name, err);
     };
@@ -394,7 +399,7 @@ pub fn buildSymbolTable(
     symbol_table_size = 0;
 
     for (self.symbols.items) |symbol| {
-        mem.copy(u8, symbol_table[symbol_table_size..(symbol.name.len + symbol_table_size)], symbol.name);
+        @memcpy(symbol_table[symbol_table_size..(symbol.name.len + symbol_table_size)], symbol.name);
         symbol_table[symbol_table_size + symbol.name.len] = 0;
         symbol_table_size += symbol.name.len + 1;
     }
@@ -994,12 +999,12 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             size = file_stats.size;
             mode = file_stats.mode;
         } else {
-            const file_stats = try handleFileIoError(.stat, file_name, std.os.fstat(file.handle));
+            const file_stats = try handleFileIoError(.stat, file_name, std.posix.fstat(file.handle));
 
             gid = file_stats.gid;
             uid = file_stats.uid;
             const mtime_full = file_stats.mtime();
-            mtime = mtime_full.tv_sec * std.time.ns_per_s + mtime_full.tv_nsec;
+            mtime = mtime_full.sec * std.time.ns_per_s + mtime_full.nsec;
             size = @as(u64, @intCast(file_stats.size));
             mode = file_stats.mode;
         }
@@ -1385,13 +1390,13 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     // TODO: error if this doesn't divide properly?
                     // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
 
-                    var ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
+                    const ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
 
                     // TODO: error handling
                     _ = try handleFileIoError(.reading, self.name, reader.read(ranlib_bytes));
                     seek_forward_amount = seek_forward_amount - @as(u32, @intCast(num_ranlib_bytes));
 
-                    var ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
+                    const ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
                     const symbol_strings_length = try handleFileIoError(.reading, self.name, reader.readInt(u32, endianess));
                     // TODO: We don't really need this information, but maybe it could come in handy
@@ -1440,7 +1445,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             trimmed_archive_name = mem.trim(u8, archive_name_buffer, "\x00");
         } else {
             const archive_name_buffer = try allocator.alloc(u8, trimmed_archive_name.len);
-            mem.copy(u8, archive_name_buffer, trimmed_archive_name);
+            @memcpy(archive_name_buffer, trimmed_archive_name);
             trimmed_archive_name = archive_name_buffer;
         }
 
@@ -1568,7 +1573,7 @@ pub const MRIParser = struct {
             var line_parser = mem.split(u8, line, " ");
 
             if (getToken(&line_parser)) |tok| {
-                var command_name = try allocator.dupe(u8, tok);
+                const command_name = try allocator.dupe(u8, tok);
                 defer allocator.free(command_name);
 
                 _ = std.ascii.lowerString(command_name, tok);

@@ -543,7 +543,7 @@ pub const Instruction = union(enum) {
 
     fn pcRelativeAddress(rd: Register, imm21: i21, op: u1) Instruction {
         assert(rd.size() == 64);
-        const imm21_u :u32= @bitCast( imm21);
+        const imm21_u: u32 = @bitCast(imm21);
         return Instruction{
             .pc_relative_address = .{
                 .rd = rd.enc(),
@@ -584,15 +584,15 @@ pub const Instruction = union(enum) {
         pub fn toU12(self: LoadStoreOffset) u12 {
             return switch (self) {
                 .immediate => |imm_type| switch (imm_type) {
-                    .post_index => |v| (@as(u12,@intCast(@as(u9, @bitCast(v)))) << 2) + 1,
-                    .pre_index => |v| (@as(u12,@intCast(@as(u9, @bitCast(v)))) << 2) + 3,
+                    .post_index => |v| (@as(u12, @intCast(@as(u9, @bitCast(v)))) << 2) + 1,
+                    .pre_index => |v| (@as(u12, @intCast(@as(u9, @bitCast(v)))) << 2) + 3,
                     .unsigned => |v| v,
                 },
                 .register => |r| switch (r.shift) {
-                    .uxtw => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12,@intCast(v)) << 2) + 16 + 2050,
-                    .lsl => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12,@intCast(v)) << 2) + 24 + 2050,
-                    .sxtw => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12,@intCast(v)) << 2) + 48 + 2050,
-                    .sxtx => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12,@intCast(v)) << 2) + 56 + 2050,
+                    .uxtw => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12, @intCast(v)) << 2) + 16 + 2050,
+                    .lsl => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12, @intCast(v)) << 2) + 24 + 2050,
+                    .sxtw => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12, @intCast(v)) << 2) + 48 + 2050,
+                    .sxtx => |v| (@as(u12, @intCast(r.rm)) << 6) + (@as(u12, @intCast(v)) << 2) + 56 + 2050,
                 },
             };
         }
@@ -774,7 +774,7 @@ pub const Instruction = union(enum) {
         switch (rt1.size()) {
             32 => {
                 assert(-256 <= offset and offset <= 252);
-                const imm7 :u7 = @truncate(@as(u9, @bitCast(offset >> 2)));
+                const imm7: u7 = @truncate(@as(u9, @bitCast(offset >> 2)));
                 return Instruction{
                     .load_store_register_pair = .{
                         .rt1 = rt1.enc(),
@@ -789,7 +789,7 @@ pub const Instruction = union(enum) {
             },
             64 => {
                 assert(-512 <= offset and offset <= 504);
-                const imm7 : u7 = @truncate(@as( u9, @bitCast(offset >> 3)));
+                const imm7: u7 = @truncate(@as(u9, @bitCast(offset >> 3)));
                 return Instruction{
                     .load_store_register_pair = .{
                         .rt1 = rt1.enc(),
@@ -957,7 +957,7 @@ pub const Instruction = union(enum) {
         };
     }
 
-    fn bitfield(
+    fn bitfield_(
         opc: u2,
         n: u1,
         rd: Register,
@@ -1084,7 +1084,7 @@ pub const Instruction = union(enum) {
         return Instruction{
             .compare_and_branch = .{
                 .rt = rt.enc(),
-                .imm19 = @bitCast(@as( i19, @intCast(offset >> 2))),
+                .imm19 = @bitCast(@as(i19, @intCast(offset >> 2))),
                 .op = op,
                 .sf = switch (rt.size()) {
                     32 => 0b0,
@@ -1467,7 +1467,7 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b00, n, rd, rn, immr, imms);
+        return bitfield_(0b00, n, rd, rn, immr, imms);
     }
 
     pub fn bfm(rd: Register, rn: Register, immr: u6, imms: u6) Instruction {
@@ -1476,7 +1476,7 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b01, n, rd, rn, immr, imms);
+        return bitfield_(0b01, n, rd, rn, immr, imms);
     }
 
     pub fn ubfm(rd: Register, rn: Register, immr: u6, imms: u6) Instruction {
@@ -1485,11 +1485,11 @@ pub const Instruction = union(enum) {
             64 => 0b1,
             else => unreachable, // unexpected register size
         };
-        return bitfield(0b10, n, rd, rn, immr, imms);
+        return bitfield_(0b10, n, rd, rn, immr, imms);
     }
 
     pub fn asrImmediate(rd: Register, rn: Register, shift: u6) Instruction {
-        const imms :u6 = @intCast(rd.size() - 1);
+        const imms: u6 = @intCast(rd.size() - 1);
         return sbfm(rd, rn, shift, imms);
     }
 
@@ -1511,12 +1511,12 @@ pub const Instruction = union(enum) {
     }
 
     pub fn lslImmediate(rd: Register, rn: Register, shift: u6) Instruction {
-        const size :u6 = @intCast(rd.size() - 1);
+        const size: u6 = @intCast(rd.size() - 1);
         return ubfm(rd, rn, size - shift + 1, size - shift);
     }
 
     pub fn lsrImmediate(rd: Register, rn: Register, shift: u6) Instruction {
-        const imms :u6 = @intCast(rd.size() - 1);
+        const imms: u6 = @intCast(rd.size() - 1);
         return ubfm(rd, rn, shift, imms);
     }
 

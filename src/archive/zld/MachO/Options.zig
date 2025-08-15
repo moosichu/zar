@@ -8,7 +8,8 @@ const mem = std.mem;
 const process = std.process;
 
 const Allocator = mem.Allocator;
-const CrossTarget = std.zig.CrossTarget;
+//const CrossTarget = std.zig.CrossTarget;
+const CrossTarget = std.Target.Query;
 const MachO = @import("../MachO.zig");
 const Zld = @import("../Zld.zig");
 
@@ -131,8 +132,8 @@ const usage =
 emit: Zld.Emit,
 output_mode: Zld.OutputMode,
 target: CrossTarget,
-platform_version: std.builtin.Version,
-sdk_version: std.builtin.Version,
+platform_version: std.SemanticVersion,
+sdk_version: std.SemanticVersion,
 positionals: []const Zld.LinkObject,
 libs: std.StringArrayHashMap(Zld.SystemLib),
 frameworks: std.StringArrayHashMap(Zld.SystemLib),
@@ -144,8 +145,8 @@ syslibroot: ?[]const u8 = null,
 stack_size: ?u64 = null,
 strip: bool = false,
 entry: ?[]const u8 = null,
-current_version: ?std.builtin.Version = null,
-compatibility_version: ?std.builtin.Version = null,
+current_version: ?std.SemanticVersion = null,
+compatibility_version: ?std.SemanticVersion = null,
 install_name: ?[]const u8 = null,
 entitlements: ?[]const u8 = null,
 pagezero_size: ?u64 = null,
@@ -173,8 +174,8 @@ pub fn parseArgs(arena: Allocator, ctx: Zld.MainCtx) !Options {
     var dynamic: bool = false;
     var dylib: bool = false;
     var install_name: ?[]const u8 = null;
-    var current_version: ?std.builtin.Version = null;
-    var compatibility_version: ?std.builtin.Version = null;
+    var current_version: ?std.SemanticVersion = null;
+    var compatibility_version: ?std.SemanticVersion = null;
     var headerpad: ?u32 = null;
     var headerpad_max_install_names: bool = false;
     var pagezero_size: ?u64 = null;
@@ -189,11 +190,11 @@ pub fn parseArgs(arena: Allocator, ctx: Zld.MainCtx) !Options {
         CrossTarget.fromTarget(builtin.target)
     else
         null;
-    var platform_version: ?std.builtin.Version = if (comptime builtin.target.isDarwin())
+    var platform_version: ?std.SemanticVersion = if (comptime builtin.target.isDarwin())
         builtin.target.os.version_range.semver.min
     else
         null;
-    var sdk_version: ?std.builtin.Version = if (comptime builtin.target.isDarwin())
+    var sdk_version: ?std.SemanticVersion = if (comptime builtin.target.isDarwin())
         builtin.target.os.version_range.semver.min
     else
         null;
@@ -263,12 +264,12 @@ pub fn parseArgs(arena: Allocator, ctx: Zld.MainCtx) !Options {
             try rpath_list.append(rpath);
         } else if (mem.eql(u8, arg, "-compatibility_version")) {
             const raw = args_iter.next() orelse ctx.printFailure("Expected version after {s}", .{arg});
-            compatibility_version = std.builtin.Version.parse(raw) catch |err| {
+            compatibility_version = std.SemanticVersion.parse(raw) catch |err| {
                 ctx.printFailure("Unable to parse {s} {s}: {s}", .{ arg, raw, @errorName(err) });
             };
         } else if (mem.eql(u8, arg, "-current_version")) {
             const raw = args_iter.next() orelse ctx.printFailure("Expected version after {s}", .{arg});
-            current_version = std.builtin.Version.parse(raw) catch |err| {
+            current_version = std.SemanticVersion.parse(raw) catch |err| {
                 ctx.printFailure("Unable to parse {s} {s}: {s}", .{ arg, raw, @errorName(err) });
             };
         } else if (mem.eql(u8, arg, "-install_name")) {
@@ -400,10 +401,10 @@ pub fn parseArgs(arena: Allocator, ctx: Zld.MainCtx) !Options {
                 tt.abi = tmp_target.abi;
             }
 
-            platform_version = std.builtin.Version.parse(min_v) catch |err| {
+            platform_version = std.SemanticVersion.parse(min_v) catch |err| {
                 ctx.printFailure("Failed to parse min_version '{s}': {s}", .{ min_v, @errorName(err) });
             };
-            sdk_version = std.builtin.Version.parse(sdk_v) catch |err| {
+            sdk_version = std.SemanticVersion.parse(sdk_v) catch |err| {
                 ctx.printFailure("Failed to parse sdk_version '{s}': {s}", .{ sdk_v, @errorName(err) });
             };
         } else if (mem.eql(u8, arg, "-undefined")) {

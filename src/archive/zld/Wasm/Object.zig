@@ -259,7 +259,7 @@ fn checkLegacyIndirectFunctionTable(object: *Object) !?Symbol {
         return error.MissingTableSymbols;
     }
 
-    var table_import: types.Import = for (object.imports) |imp| {
+    const table_import: types.Import = for (object.imports) |imp| {
         if (imp.kind == .table) {
             break imp;
         }
@@ -533,7 +533,7 @@ fn Parser(comptime ReaderType: type) type {
                         try assertEnd(reader);
                     },
                     .code => {
-                        var start = reader.context.bytes_left;
+                        const start = reader.context.bytes_left;
                         var index: u32 = 0;
                         const count = try readLeb(u32, reader);
                         const imported_function_count = parser.object.importedCountByKind(.function);
@@ -554,7 +554,7 @@ fn Parser(comptime ReaderType: type) type {
                         }
                     },
                     .data => {
-                        var start = reader.context.bytes_left;
+                        const start = reader.context.bytes_left;
                         var index: u32 = 0;
                         const count = try readLeb(u32, reader);
                         while (index < count) : (index += 1) {

@@ -143,8 +143,9 @@ fn printVersion(stdout: fs.File.Writer) void {
     stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
 }
 
-// For the release standalone program, we just want to display concise errors
-// to the end-user, but during development we want them to show up as part of
+// For the release standalone program,
+// we just want to display concise errors to the end-user,
+// but during development we want them to show up as part of
 // the regular logging flow.
 pub fn log(
     comptime level: std.log.Level,
@@ -280,7 +281,7 @@ pub fn main() anyerror!void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
     const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
         return err;
     } else {
@@ -306,7 +307,7 @@ pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_name
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
 
-    var allocator = arena.allocator();
+    const allocator = arena.allocator();
 
     const cwd = fs.cwd();
 

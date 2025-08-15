@@ -571,7 +571,7 @@ pub const Iterator = struct {
         var stream = std.io.fixedBufferStream(it.data[it.pos..]);
         const reader = stream.reader();
 
-        var size = try reader.readIntLittle(u32);
+        const size = try reader.readIntLittle(u32);
         if (size == 0xFFFFFFFF) {
             log.err("MachO doesn't support 64bit DWARF CFI __eh_frame records", .{});
             return error.UnsupportedDwarfCfiFormat;

@@ -3,29 +3,36 @@ const mem = std.mem;
 
 const zar_version = std.SemanticVersion{ .major = 0, .minor = 0, .patch = 1 };
 
-pub fn build(b: *std.build.Builder) !void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
+pub fn build(b: *std.Build) !void {
+    // Standard target options allows the person running `zig build`
+    // to choose what target to build for.
+    // Here we do not override the defaults, which means any target is
+    // allowed, and the default is native.
+    // Other options for restricting supported target set are available.
     const target = b.standardTargetOptions(.{});
 
-    // Standard release options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
+    // Standard release options allow the person running `zig build`
+    // to select between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const optimize = b.standardOptimizeOption(.{});
 
     const test_filter = b.option([]const u8, "test-filter", "Filter tests by name");
 
-    const exe = b.addExecutable(.{
-        .name = "zar",
-        .root_source_file = .{ .path = "src/main.zig" },
+    const exe_mod = b.addModule("zar", .{
+        .root_source_file = .{ .src_path = .{ .owner = b, .sub_path = "src/main.zig" } },
         .target = target,
         .optimize = optimize,
     });
-    var tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/test.zig" },
+
+    const test_mod = b.addModule("tests", .{
+        .root_source_file = .{ .src_path = .{ .owner = b, .sub_path = "src/test.zig" } },
         .target = target,
-        .filter = test_filter,
+        .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{ .name = "zar", .root_module = exe_mod, .version = zar_version });
+    var tests = b.addTest(.{
+        .root_module = test_mod,
+        .filters = if (test_filter != null) &.{test_filter.?} else &.{},
     });
 
     // TODO: Figure this out!
@@ -39,7 +46,8 @@ pub fn build(b: *std.build.Builder) !void {
     const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 
     const exe_options = b.addOptions();
-    const options_module = exe_options.createModule();
+    exe_mod.addOptions("build_options", exe_options);
+    test_mod.addOptions("build_options", exe_options);
 
     // const zld = b.createModule(.{
     //     .source_file = .{ .path = "zld/src/Zld.zig" },
@@ -48,9 +56,6 @@ pub fn build(b: *std.build.Builder) !void {
 
     // exe.addModule("Zld", zld);
     // tests.addModule("Zld", zld);
-
-    exe.addModule("build_options", options_module);
-    tests.addModule("build_options", options_module);
 
     {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;
@@ -62,6 +67,8 @@ pub fn build(b: *std.build.Builder) !void {
         const mimmick_broken_cross_compiled_llvm_ar_behaviour = b.option(bool, "mimmick-broken-cross-compiled-llvm-ar-behaviour", "Workaround for the fact that cross-compiling zig at the moment result in llvm ar behaving on macOS as if it is running on any other OS") orelse false;
         exe_options.addOption(bool, "mimmick_broken_cross_compiled_llvm_ar_behaviour", mimmick_broken_cross_compiled_llvm_ar_behaviour);
     }
+
+    exe_options.addOption([]const u8, "zig_exe_path", b.graph.zig_exe);
 
     // Taken from https://github.com/ziglang/zig/blob/master/build.zig, extract
     // the git commit hash to get an actual version.
@@ -90,7 +97,7 @@ pub fn build(b: *std.build.Builder) !void {
             },
             2 => {
                 // Untagged development build (e.g. 0.9.0-dev.2025+ecf0050a9).
-                var it = mem.split(u8, git_describe, "-");
+                var it = mem.splitScalar(u8, git_describe, '-');
                 const tagged_ancestor = it.first();
                 const commit_height = it.next().?;
                 const commit_id = it.next().?;
@@ -137,27 +144,30 @@ pub fn build(b: *std.build.Builder) !void {
             ) catch unreachable;
 
             // On mingw, we need to opt into windows 7+ to get some features required by tracy.
-            const tracy_c_flags: []const []const u8 = if (target.isWindows() and target.getAbi() == .gnu)
-                &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
-            else
-                &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
-            exe.addIncludePath(.{ .path = tracy_path });
-            exe.addCSourceFile(.{ .file = .{ .path = client_cpp }, .flags = tracy_c_flags });
+            const tracy_c_flags: []const []const u8 =
+                if (target.result.os.tag == .windows and target.result.abi.isGnu())
+                    &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined", "-D_WIN32_WINNT=0x601" }
+                else
+                    &[_][]const u8{ "-DTRACY_ENABLE=1", "-fno-sanitize=undefined" };
+            const tracy_lazy_path: std.Build.LazyPath = .{ .src_path = .{ .owner = b, .sub_path = tracy_path } };
+            const client_cpp_lazy: std.Build.LazyPath = .{ .src_path = .{ .owner = b, .sub_path = client_cpp } };
+            exe_mod.addIncludePath(tracy_lazy_path);
+            exe_mod.addCSourceFile(.{ .file = client_cpp_lazy, .flags = tracy_c_flags });
             exe.linkLibC();
             exe.linkLibCpp();
 
-            tests.addIncludePath(.{ .path = tracy_path });
-            tests.addCSourceFile(.{ .file = .{ .path = client_cpp }, .flags = tracy_c_flags });
+            tests.addIncludePath(tracy_lazy_path);
+            tests.addCSourceFile(.{ .file = client_cpp_lazy, .flags = tracy_c_flags });
             tests.linkLibC();
             tests.linkLibCpp();
 
-            if (target.isWindows()) {
+            if (target.result.os.tag == .windows) {
                 exe.linkSystemLibrary("dbghelp");
                 exe.linkSystemLibrary("ws2_32");
 
                 tests.linkSystemLibrary("dbghelp");
                 tests.linkSystemLibrary("ws2_32");
-            } else if (target.isDarwin()) {
+            } else if (target.result.os.tag.isDarwin()) {
                 exe.linkFramework("CoreFoundation");
                 tests.linkFramework("CoreFoundation");
             }

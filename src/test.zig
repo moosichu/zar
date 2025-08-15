@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 
 const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
+const build_options = @import("build_options");
 
 const path_to_zar = "../../../zig-out/bin/zar";
 
@@ -81,7 +82,7 @@ test "Test Archive With Symbols Basic" {
     const test4_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
     };
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test4_names, &test4_symbols, .{});
 }
 
@@ -92,7 +93,7 @@ test "Test Archive With Long Names And Symbols" {
         &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
         &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
     };
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test5_names, &test5_symbols, .{});
 }
 
@@ -126,7 +127,7 @@ test "Test Archive Sorted" {
         &[_][]const u8{ "_11", "_12", "_13" },
     };
     // TODO: remove redundancy maybe by excluding parsing component of this test?
-    var allocator = std.testing.allocator;
+    const allocator = std.testing.allocator;
     try doStandardTests(allocator, no_dir, &test_sort_names, &test_sort, .{});
 }
 
@@ -172,7 +173,7 @@ test "Test Argument Errors" {
     }
 }
 
-fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_names: [][][]const u8, symbol_count: u32) !void {
+fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: [][][]u8, symbol_count: u32) !void {
     for (file_names, 0..) |_, index| {
         file_names[index] = try std.fmt.allocPrint(allocator, "index_{}.o", .{index});
     }
@@ -188,10 +189,11 @@ fn initialiseTestData(allocator: Allocator, file_names: [][]const u8, symbol_nam
 const targets = result: {
     const os_fields = std.meta.fields(OperatingSystem);
     const arch_fields = std.meta.fields(Architecture);
-    comptime var aggregator: [os_fields.len * arch_fields.len]Target = undefined;
-    comptime var target_index = 0;
-    inline for (os_fields) |os_field| {
-        inline for (arch_fields) |arch_field| {
+    var aggregator: [os_fields.len * arch_fields.len]Target = undefined;
+    var target_index = 0;
+    // "for"s were inline
+    for (os_fields) |os_field| {
+        for (arch_fields) |arch_field| {
             aggregator[target_index] = .{
                 .architecture = @as(Architecture, @enumFromInt(arch_field.value)),
                 .operating_system = @as(OperatingSystem, @enumFromInt(os_field.value)),
@@ -241,8 +243,8 @@ const Architecture = enum {
 
 const llvm_formats = result: {
     const fields = std.meta.fields(LlvmFormat);
-    comptime var aggregator: [fields.len]LlvmFormat = undefined;
-    inline for (fields, 0..) |field, field_index| {
+    var aggregator: [fields.len]LlvmFormat = undefined;
+    for (fields, 0..) |field, field_index| {
         aggregator[field_index] = @as(LlvmFormat, @enumFromInt(field.value));
     }
     break :result aggregator;
@@ -274,7 +276,7 @@ const TestDirInfo = struct {
             .cwd = undefined,
         };
         result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
-            "zig-cache", "tmp", &result.tmp_dir.sub_path,
+            ".zig-cache", "tmp", &result.tmp_dir.sub_path,
         });
         return result;
     }
@@ -301,9 +303,9 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         // if a test is going to fail anyway, this is a useful way to debug it for now..
         var cancel_cleanup = false;
         defer if (!cancel_cleanup) test_dir_info.cleanup();
-        errdefer {
+        errdefer |err| {
             cancel_cleanup = true;
-            logger.err("Failed to do archiving operation with files for target: {s}", .{target.targetToArgument()});
+            logger.err("Failed to do archiving operation with files for target ({s}): {}", .{ target.targetToArgument(), err });
         }
 
         // Create an archive with llvm ar & zar and confirm that the outputs match
@@ -312,8 +314,8 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         const llvm_format = target.operating_system.toDefaultLlvmFormat();
         try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
         {
-            errdefer {
-                logger.err("Tests failed with explicitly provided archive format: {} ", .{llvm_format});
+            errdefer |err| {
+                logger.err("Tests failed with explicitly provided archive format ({}): {}", .{ llvm_format, err });
             }
             // Create an archive explicitly with the format for the target operating system
             try doLlvmArchiveOperation(llvm_format, operation, file_names, test_dir_info);
@@ -325,10 +327,10 @@ pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: [
         }
 
         {
-            errdefer {
-                logger.err("Tests failed with implict archive format", .{});
+            errdefer |err| {
+                logger.err("Tests failed with implicit archive format: {}", .{err});
             }
-            // Create an archive implcitly with the format for the target operating system
+            // Create an archive implicitly with the format for the target operating system
             try doLlvmArchiveOperation(.implicit, operation, file_names, test_dir_info);
             try testParsingOfLlvmGeneratedArchive(target, framework_allocator, .implicit, file_names, symbol_names, test_dir_info);
             try testArchiveCreation(.implicit, file_names, test_dir_info);
@@ -343,8 +345,8 @@ fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
     {
-        errdefer {
-            logger.err("Failed symbol stripping", .{});
+        errdefer |err| {
+            logger.err("Failed symbol stripping: {}", .{err});
         }
         const operation = "rS";
         try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
@@ -354,8 +356,8 @@ fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
     }
 
     {
-        errdefer {
-            logger.err("Failed acting as ranlib", .{});
+        errdefer |err| {
+            logger.err("Failed acting as ranlib: {}", .{err});
         }
         const operation = "s";
         try doZarArchiveOperation(.implicit, operation, &no_files, test_dir_info);
@@ -369,8 +371,8 @@ fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_
     const tracy = trace(@src());
     defer tracy.end();
 
-    errdefer {
-        logger.err("Failed create archive with zar that matched llvm with target format {}", .{format});
+    errdefer |err| {
+        logger.err("Failed create archive with zar that matched llvm with target format ({}): {}", .{ format, err });
     }
     const operation = "rc";
     try doZarArchiveOperation(format, operation, file_names, test_dir_info);
@@ -378,8 +380,8 @@ fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_
 }
 
 fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
-    errdefer {
-        logger.err("Failed to get zar to parse file generated with the format {}", .{format});
+    errdefer |err| {
+        logger.err("Failed to get zar to parse file generated with the format ({}): {}", .{ format, err });
     }
 
     try testArchiveParsing(target, framework_allocator, test_dir_info, file_names, symbol_names);
@@ -425,13 +427,22 @@ fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_i
     defer tracy.end();
     const test_dir = test_dir_info.tmp_dir.dir;
 
-    const archive_file = try test_dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only });
+    const archive_file = test_dir.openFile(llvm_ar_archive_name, .{ .mode = .read_only }) catch |err| {
+        logger.err("Failed to open archive file {s} in cwd {s}, full path: {s}/{s}, err {}", .{
+            llvm_ar_archive_name,
+            test_dir_info.cwd,
+            llvm_ar_archive_name,
+            test_dir_info.cwd,
+            err,
+        });
+        return err;
+    };
     defer archive_file.close();
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
-    var testing_allocator = arena.allocator();
+    const testing_allocator = arena.allocator();
 
     var archive = try Archive.init(testing_allocator, test_dir, archive_file, llvm_ar_archive_name, Archive.ArchiveType.ambiguous, .{}, false);
     defer archive.deinit();
@@ -503,6 +514,9 @@ const ExpectedOut = struct {
 };
 
 fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_info: TestDirInfo, expected_out: ExpectedOut) !void {
+    errdefer |err| {
+        logger.err("test failure: {}", .{err});
+    }
     // argments[0] must be path_to_zar
     var invoke_as_child_process = always_invoke_zar_as_child_process;
     // At the moment it's easiest to verify the output of stdout/stderr by launching
@@ -510,7 +524,10 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     invoke_as_child_process = invoke_as_child_process or expected_out.stderr != null;
     invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
     if (invoke_as_child_process) {
-        const result = try std.ChildProcess.run(.{
+        errdefer |err| {
+            logger.err("{}: {s} {s}", .{ err, arguments, test_dir_info.cwd });
+        }
+        const result = try std.process.Child.run(.{
             .allocator = allocator,
             .argv = arguments,
             .cwd = test_dir_info.cwd,
@@ -523,9 +540,15 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
 
         if (expected_out.stdout) |expected_stdout| {
             try testing.expectEqualStrings(expected_stdout, result.stdout);
+            errdefer |err| {
+                logger.err("{}, also received stdout \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stdout });
+            }
         }
         if (expected_out.stderr) |expected_stderr| {
             try testing.expectEqualStrings(expected_stderr, result.stderr);
+            errdefer |err| {
+                logger.err("{}, also received stderr \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stderr });
+            }
         }
     } else {
         // TODO: don't deinit testing allocator here so that we can confirm
@@ -556,8 +579,8 @@ fn doZarArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fil
 }
 
 fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    errdefer {
-        logger.err("Failed to run llvm ar operation {s} with the provided format: {}", .{ operation, format });
+    errdefer |err| {
+        logger.err("Failed to run llvm ar operation {s} with the provided format ({}): {}", .{ operation, format, err });
     }
     const tracy = trace(@src());
     defer tracy.end();
@@ -565,7 +588,7 @@ fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fi
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
-    try argv.append("zig");
+    try argv.append(build_options.zig_exe_path);
     try argv.append("ar");
     try argv.append(format.llvmFormatToArgument());
 
@@ -573,11 +596,15 @@ fn doLlvmArchiveOperation(format: LlvmFormat, comptime operation: []const u8, fi
     try argv.append(llvm_ar_archive_name);
     try argv.appendSlice(file_names);
 
-    const result = try std.ChildProcess.run(.{
+    const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = argv.items,
         .cwd = test_dir_info.cwd,
     });
+
+    if (result.stderr.len > 0) {
+        logger.err("llvm ar operation failed with: {s}", .{result.stderr});
+    }
 
     defer {
         allocator.free(result.stdout);
@@ -590,12 +617,12 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
     defer tracy.end();
 
     const worker_count = @max(1, std.Thread.getCpuCount() catch 1);
-    const child_processes = try framework_allocator.alloc(std.ChildProcess, worker_count);
+    const child_processes = try framework_allocator.alloc(std.process.Child, worker_count);
     defer framework_allocator.free(child_processes);
 
     var argv = std.ArrayList([]const u8).init(framework_allocator);
     defer argv.deinit();
-    try argv.append("zig");
+    try argv.append(build_options.zig_exe_path);
     try argv.append("cc");
     try argv.append("-c");
     try argv.append("-o");
@@ -630,7 +657,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
         argv.items[file_name_arg] = file_name;
         argv.items[source_name_arg] = source_file_name;
 
-        child_processes[process_index] = std.ChildProcess.init(argv.items, framework_allocator);
+        child_processes[process_index] = std.process.Child.init(argv.items, framework_allocator);
         child_processes[process_index].cwd = test_dir_info.cwd;
         try child_processes[process_index].spawn();
     }

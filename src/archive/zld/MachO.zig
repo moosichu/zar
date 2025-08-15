@@ -18,7 +18,7 @@ const dead_strip = @import("MachO/dead_strip.zig");
 const eh_frame = @import("MachO/eh_frame.zig");
 const fat = @import("MachO/fat.zig");
 const load_commands = @import("MachO/load_commands.zig");
-const thunks = @import("MachO/thunks.zig");
+const thunks_ = @import("MachO/thunks.zig");
 const trace = @import("tracy.zig").trace;
 
 const Allocator = mem.Allocator;
@@ -98,8 +98,8 @@ got_table: std.AutoHashMapUnmanaged(SymbolWithLoc, u32) = .{},
 stubs: std.ArrayListUnmanaged(IndirectPointer) = .{},
 stubs_table: std.AutoHashMapUnmanaged(SymbolWithLoc, u32) = .{},
 
-thunk_table: std.AutoHashMapUnmanaged(AtomIndex, thunks.ThunkIndex) = .{},
-thunks: std.ArrayListUnmanaged(thunks.Thunk) = .{},
+thunk_table: std.AutoHashMapUnmanaged(AtomIndex, thunks_.ThunkIndex) = .{},
+thunks: std.ArrayListUnmanaged(thunks_.Thunk) = .{},
 
 atoms: std.ArrayListUnmanaged(Atom) = .{},
 
@@ -430,7 +430,7 @@ pub fn flush(self: *MachO) !void {
         const size = linkedit.fileoff - start;
         if (size > 0) {
             log.debug("zeroing out zerofill area of length {x} at {x}", .{ size, start });
-            var padding = try self.base.allocator.alloc(u8, size);
+            const padding = try self.base.allocator.alloc(u8, size);
             defer self.base.allocator.free(padding);
             mem.set(u8, padding, 0);
             try self.base.file.pwriteAll(padding, start);
@@ -1030,17 +1030,17 @@ pub fn getOutputSection(self: *MachO, sect: macho.section_64) !?u8 {
                     {
                         break :blk self.getSectionByName("__DATA_CONST", sectname) orelse
                             try self.initSection(
-                            "__DATA_CONST",
-                            sectname,
-                            .{},
-                        );
+                                "__DATA_CONST",
+                                sectname,
+                                .{},
+                            );
                     } else if (mem.eql(u8, sectname, "__data")) {
                         break :blk self.getSectionByName("__DATA", "__data") orelse
                             try self.initSection(
-                            "__DATA",
-                            "__data",
-                            .{},
-                        );
+                                "__DATA",
+                                "__data",
+                                .{},
+                            );
                     }
                 }
                 break :blk self.getSectionByName(segname, sectname) orelse try self.initSection(
@@ -1093,8 +1093,8 @@ pub fn createGotAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__DATA_CONST", "__got") orelse
         try self.initSection("__DATA_CONST", "__got", .{
-        .flags = macho.S_NON_LAZY_SYMBOL_POINTERS,
-    });
+            .flags = macho.S_NON_LAZY_SYMBOL_POINTERS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -1179,10 +1179,10 @@ fn createStubHelperPreambleAtom(self: *MachO) !void {
 
     const sect_id = self.getSectionByName("__TEXT", "__stub_helper") orelse
         try self.initSection("__TEXT", "__stub_helper", .{
-        .flags = macho.S_REGULAR |
-            macho.S_ATTR_PURE_INSTRUCTIONS |
-            macho.S_ATTR_SOME_INSTRUCTIONS,
-    });
+            .flags = macho.S_REGULAR |
+                macho.S_ATTR_PURE_INSTRUCTIONS |
+                macho.S_ATTR_SOME_INSTRUCTIONS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.stub_helper_preamble_sym_index = sym_index;
@@ -1324,8 +1324,8 @@ pub fn createLazyPointerAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__DATA", "__la_symbol_ptr") orelse
         try self.initSection("__DATA", "__la_symbol_ptr", .{
-        .flags = macho.S_LAZY_SYMBOL_POINTERS,
-    });
+            .flags = macho.S_LAZY_SYMBOL_POINTERS,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -1370,11 +1370,11 @@ pub fn createStubAtom(self: *MachO) !AtomIndex {
 
     const sect_id = self.getSectionByName("__TEXT", "__stubs") orelse
         try self.initSection("__TEXT", "__stubs", .{
-        .flags = macho.S_SYMBOL_STUBS |
-            macho.S_ATTR_PURE_INSTRUCTIONS |
-            macho.S_ATTR_SOME_INSTRUCTIONS,
-        .reserved2 = stub_size,
-    });
+            .flags = macho.S_SYMBOL_STUBS |
+                macho.S_ATTR_PURE_INSTRUCTIONS |
+                macho.S_ATTR_SOME_INSTRUCTIONS,
+            .reserved2 = stub_size,
+        });
     sym.n_sect = sect_id + 1;
 
     self.addAtomToSection(atom_index);
@@ -2012,7 +2012,7 @@ fn writeAtoms(self: *MachO) !void {
                             try self.writeStubHelperCode(atom_index, buffer.writer());
                         } else if (header.isCode()) {
                             // A thunk
-                            try thunks.writeThunkCode(self, atom_index, buffer.writer());
+                            try thunks_.writeThunkCode(self, atom_index, buffer.writer());
                         } else unreachable;
                     },
                 }
@@ -2130,7 +2130,7 @@ fn calcSectionSizes(self: *MachO) !void {
             if (mem.eql(u8, header.sectName(), "__stub_helper")) continue;
 
             // Create jump/branch range extenders if needed.
-            try thunks.createThunks(self, @as(u8, @intCast(sect_id)));
+            try thunks_.createThunks(self, @as(u8, @intCast(sect_id)));
         }
     }
 }
@@ -2365,7 +2365,7 @@ fn writeSegmentHeaders(self: *MachO, writer: anytype) !void {
 
         if (out_seg.nsects == 0 and
             (mem.eql(u8, out_seg.segName(), "__DATA_CONST") or
-            mem.eql(u8, out_seg.segName(), "__DATA"))) continue;
+                mem.eql(u8, out_seg.segName(), "__DATA"))) continue;
 
         try writer.writeStruct(out_seg);
         for (self.sections.items(.header)[indexes.start..indexes.end]) |header| {
@@ -2828,7 +2828,7 @@ fn writeDyldInfoData(self: *MachO) !void {
     link_seg.filesize = needed_size;
     assert(mem.isAlignedGeneric(u64, link_seg.fileoff + link_seg.filesize, @alignOf(u64)));
 
-    var buffer = try gpa.alloc(u8, needed_size);
+    const buffer = try gpa.alloc(u8, needed_size);
     defer gpa.free(buffer);
     mem.set(u8, buffer, 0);
 

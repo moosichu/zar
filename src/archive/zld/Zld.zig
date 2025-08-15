@@ -113,30 +113,30 @@ pub fn openPath(allocator: Allocator, tag: Tag, options: Options, thread_pool: *
 
 pub fn deinit(base: *Zld) void {
     switch (base.tag) {
-        .elf => @fieldParentPtr(Elf, "base", base).deinit(),
-        .macho => @fieldParentPtr(MachO, "base", base).deinit(),
-        .coff => @fieldParentPtr(Coff, "base", base).deinit(),
-        .wasm => @fieldParentPtr(Wasm, "base", base).deinit(),
+        .elf => @as(Elf, @fieldParentPtr("base", base)).deinit(),
+        .macho => @as(MachO, @fieldParentPtr("base", base)).deinit(),
+        .coff => @as(Coff, @fieldParentPtr("base", base)).deinit(),
+        .wasm => @as(Wasm, @fieldParentPtr("base", base)).deinit(),
     }
     base.allocator.destroy(base);
 }
 
 pub fn flush(base: *Zld) !void {
     switch (base.tag) {
-        .elf => try @fieldParentPtr(Elf, "base", base).flush(),
-        .macho => try @fieldParentPtr(MachO, "base", base).flush(),
-        .coff => try @fieldParentPtr(Coff, "base", base).flush(),
-        .wasm => try @fieldParentPtr(Wasm, "base", base).flush(),
+        .elf => try @as(Elf, @fieldParentPtr("base", base)).flush(),
+        .macho => try @as(MachO, @fieldParentPtr("base", base)).flush(),
+        .coff => try @as(Coff, @fieldParentPtr("base", base)).flush(),
+        .wasm => try @as(Wasm, @fieldParentPtr("base", base)).flush(),
     }
     base.closeFiles();
 }
 
 fn closeFiles(base: *const Zld) void {
     switch (base.tag) {
-        .elf => @fieldParentPtr(Elf, "base", base).closeFiles(),
-        .macho => @fieldParentPtr(MachO, "base", base).closeFiles(),
-        .coff => @fieldParentPtr(Coff, "base", base).closeFiles(),
-        .wasm => @fieldParentPtr(Wasm, "base", base).closeFiles(),
+        .elf => @as(Elf, @fieldParentPtr("base", base)).closeFiles(),
+        .macho => @as(MachO, @fieldParentPtr("base", base)).closeFiles(),
+        .coff => @as(Coff, @fieldParentPtr("base", base)).closeFiles(),
+        .wasm => @as(Wasm, @fieldParentPtr("base", base)).closeFiles(),
     }
     base.file.close();
 }

@@ -109,7 +109,7 @@ pub fn parse(self: *Archive, allocator: Allocator, reader: anytype) !void {
             return error.NoSymbolLookupTableInArchive;
         }
 
-        var buffer = try allocator.alloc(u8, size);
+        const buffer = try allocator.alloc(u8, size);
         defer allocator.free(buffer);
 
         try reader.readNoEof(buffer);
@@ -156,7 +156,7 @@ pub fn parse(self: *Archive, allocator: Allocator, reader: anytype) !void {
             break :blk;
         }
 
-        var buffer = try allocator.alloc(u8, size);
+        const buffer = try allocator.alloc(u8, size);
         defer allocator.free(buffer);
 
         try reader.readNoEof(buffer);
