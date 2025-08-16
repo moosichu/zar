@@ -20,7 +20,7 @@ If you would like to contribute please do let me know! Progress on this project 
 
 ## Other notes
 
-The thing that make this tricky is that the "ar" format used as a basis for the archives that linkers use hasn't been standardised, meaning that depending hon the platform being targeted - the format can vary in subtly different ways.
+The thing that make this tricky is that the "ar" format used as a basis for the archives that linkers use hasn't been standardised, meaning that depending on the platform being targeted - the format can vary in subtly different ways.
 
 Three main variants to focus on (for now):
 
