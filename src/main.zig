@@ -19,7 +19,7 @@ pub const zar_overview =
     \\Description:
     \\  The Zig Archiver is the self-hosted implementation of the ar utility
     \\  function that originated from Unix, created as a drop-in replacement for
-    \\  llvm's iplementation of ar (llvm ar).
+    \\  llvm's implementation of ar (llvm ar).
     \\
     \\  For more information on archivers and their usage, see:
     \\    - https://en.wikipedia.org/wiki/Ar_(Unix)
