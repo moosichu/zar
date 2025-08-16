@@ -327,15 +327,11 @@ pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, 
 // These are the defaults llvm ar uses (excepting windows)
 // https://github.com/llvm-mirror/llvm/blob/master/tools/llvm-ar/llvm-ar.cpp
 pub fn getDefaultArchiveTypeFromHost() ArchiveType {
-    if (@hasField(build_options, "mimmick_broken_cross_compiled_llvm_ar_behaviour")) {
-        if (build_options.mimmick_broken_cross_compiled_llvm_ar_behaviour) {
-            return .gnu;
-        }
+    if (build_options.mimmick_broken_cross_compiled_llvm_ar_behaviour) {
+        return .gnu;
     }
+    if (builtin.os.tag.isDarwin()) return .darwin;
     return .gnu;
-
-    // if (builtin.os.tag.isDarwin()) return .darwin;
-    // return .gnu;
 }
 
 pub fn init(
@@ -645,11 +641,11 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
             // is that we write an empty symbol table!
             // However - there is one exception to this, which is that llvm ar
             // does not generate the symbol table if we haven't just created
-            // the archive.
+            // the archive *and* we aren't running from a darwin host.
             // WHAT ?!
             const write_symbol_table = write_symbol_table: {
                 var result = self.modifiers.build_symbol_table;
-                if (!self.created) {
+                if (getDefaultArchiveTypeFromHost() != .darwin and !self.created) {
                     result = result and self.symbols.items.len != 0;
                 }
                 break :write_symbol_table result;
