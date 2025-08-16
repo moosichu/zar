@@ -191,7 +191,7 @@ fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
 
 fn checkOptionalArgsBounds(
     args: []const []const u8,
-    index: u32,
+    index: usize,
     comptime missing_argument: []const u8,
     comptime for_modifier: []const u8,
 ) bool {
@@ -333,23 +333,21 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
 
-    // skip the executable name
     const stdout = io.getStdOut().writer();
     const stderr = io.getStdErr().writer();
-
-    var arg_index: u32 = 1;
 
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Check if we are in ranlib mode!
-    mode = mode: {
-        if (arg_index < args.len) {
-            if (mem.eql(u8, "ranlib", args[arg_index])) {
-                arg_index = arg_index + 1;
-                break :mode .ranlib;
+    mode, const offset: usize = determine: {
+        if (args.len > 1) {
+            if (mem.eql(u8, "ranlib", args[1])) {
+                // skip executable name + "ranlib"
+                break :determine .{ .ranlib, 2 };
             }
         }
-        break :mode .ar;
+        // only skip the executable name
+        break :determine .{ .ar, 1 };
     };
 
     var modifiers: Archive.Modifiers = .{};
@@ -357,132 +355,147 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     var found_archive_path: ?[]const u8 = null;
     var files = std.ArrayList([]const u8).init(allocator);
     defer files.deinit();
-    while (arg_index < args.len) {
-        defer arg_index += 1;
 
-        if (arg_index >= args.len) {
-            break;
-        }
-
-        var current_arg = args[arg_index];
-        {
-            const format_string_prefix = "--format=";
-            const plugin_string_prefix = "--plugin=";
-            const help_string = "--help";
-            const version_string = "--version";
-            const thin_string = "--thin";
-            if (mode == .ar and mem.startsWith(u8, current_arg, format_string_prefix)) {
-                const format_string = current_arg[format_string_prefix.len..];
-                if (mem.eql(u8, format_string, "default")) {
-                    archive_type = Archive.ArchiveType.ambiguous;
-                } else if (mem.eql(u8, format_string, "bsd")) {
-                    archive_type = .bsd;
-                } else if (mem.eql(u8, format_string, "darwin")) {
-                    archive_type = .darwin;
-                } else if (mem.eql(u8, format_string, "gnu")) {
-                    archive_type = .gnu;
-                } else {
-                    logger.err("Invalid format {s}", .{format_string});
-                    return Archive.HandledError.UnknownFormat;
-                }
-                continue;
-            } else if (mode == .ar and mem.startsWith(u8, current_arg, plugin_string_prefix)) {
-                // Ignored for compatability!
-                continue;
-            } else if (mode == .ar and mem.eql(u8, current_arg, thin_string)) {
-                modifiers.thin_archives = true;
-                continue;
-            } else if (current_arg.len == 0) {
-                continue;
-            } else if (mem.eql(u8, current_arg, help_string)) {
-                printHelp(stdout);
-                return;
-            } else if (mem.eql(u8, current_arg, version_string)) {
-                printVersion(stdout);
-                return;
-            }
-        }
-
-        var modifier_slice: []const u8 = "";
-        if (operation == .undefined) {
-            operation = operation: {
-                const operation_slice = slice: {
-                    // the operation may start with a hyphen - so slice it!
-                    var arg_slice = current_arg[0..];
-                    if (arg_slice[0] == '-') {
-                        if (arg_slice.len == 1) {
-                            printArgumentError("A valid operation must be provided - only hyphen found.", .{});
-                            return;
+    const ParseState = enum {
+        normal, relpos_before, relpos_after, count_gate, count
+    };
+    var parser_state: ParseState = .normal;
+    nxt: for (args[offset..], offset..) |arg, arg_index| {
+        cur: switch (parser_state) {
+            .normal => {
+                {
+                    const format_string_prefix = "--format=";
+                    const plugin_string_prefix = "--plugin=";
+                    const help_string = "--help";
+                    const version_string = "--version";
+                    const thin_string = "--thin";
+                    if (mode == .ar and mem.startsWith(u8, arg, format_string_prefix)) {
+                        const format_string = arg[format_string_prefix.len..];
+                        if (mem.eql(u8, format_string, "default")) {
+                            archive_type = Archive.ArchiveType.ambiguous;
+                        } else if (mem.eql(u8, format_string, "bsd")) {
+                            archive_type = .bsd;
+                        } else if (mem.eql(u8, format_string, "darwin")) {
+                            archive_type = .darwin;
+                        } else if (mem.eql(u8, format_string, "gnu")) {
+                            archive_type = .gnu;
+                        } else {
+                            logger.err("Invalid format {s}", .{format_string});
+                            return Archive.HandledError.UnknownFormat;
                         }
-
-                        arg_slice = arg_slice[1..];
-                    }
-
-                    break :slice arg_slice;
-                };
-
-                modifier_slice = operation_slice[1..];
-
-                // Process Operation
-                switch (operation_slice[0]) {
-                    'r' => break :operation .insert,
-                    'd' => break :operation .delete,
-                    'm' => break :operation .move,
-                    'p' => break :operation .print_contents,
-                    'q' => break :operation .quick_append,
-                    's' => break :operation .ranlib,
-                    't' => break :operation .print_names,
-                    'x' => break :operation .extract,
-                    'S' => break :operation .print_symbols,
-                    else => {
-                        printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
+                        continue;
+                    } else if (mode == .ar and mem.startsWith(u8, arg, plugin_string_prefix)) {
+                        // Ignored for compatability!
+                        continue;
+                    } else if (mode == .ar and mem.eql(u8, arg, thin_string)) {
+                        modifiers.thin_archives = true;
+                        continue;
+                    } else if (arg.len == 0) {
+                        continue;
+                    } else if (mem.eql(u8, arg, help_string)) {
+                        printHelp(stdout);
                         return;
+                    } else if (mem.eql(u8, arg, version_string)) {
+                        printVersion(stdout);
+                        return;
+                    }
+                }
+
+                var modifier_slice: []const u8 = "";
+                if (operation == .undefined) {
+                    operation = operation: {
+                        const operation_slice = slice: {
+                            // the operation may start with a hyphen - so slice it!
+                            var arg_slice = arg[0..];
+                            if (arg_slice[0] == '-') {
+                                if (arg_slice.len == 1) {
+                                    printArgumentError("A valid operation must be provided - only hyphen found.", .{});
+                                    return;
+                                }
+
+                                arg_slice = arg_slice[1..];
+                            }
+
+                            break :slice arg_slice;
+                        };
+
+                        modifier_slice = operation_slice[1..];
+
+                        // Process Operation
+                        switch (operation_slice[0]) {
+                            'r' => break :operation .insert,
+                            'd' => break :operation .delete,
+                            'm' => break :operation .move,
+                            'p' => break :operation .print_contents,
+                            'q' => break :operation .quick_append,
+                            's' => break :operation .ranlib,
+                            't' => break :operation .print_names,
+                            'x' => break :operation .extract,
+                            'S' => break :operation .print_symbols,
+                            else => {
+                                printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
+                                return;
+                            },
+                        }
+                    };
+                } else if (arg[0] == '-') {
+                    if (arg.len > 1) {
+                        modifier_slice = arg[1..];
+                    }
+                } else if (found_archive_path == null) {
+                    found_archive_path = arg;
+                    continue;
+                } else {
+                    try files.append(arg);
+                    continue;
+                }
+
+                for (modifier_slice) |modifier_char| {
+                    if (!processModifier(modifier_char, &modifiers)) {
+                        return;
+                    }
+                } 
+
+                // TODO: Figure out how to deal with multiple of these following settings!
+                // (modifiers.move_setting, modifiers.instance_to_delete)
+
+                // Process [relpos] if needed!
+                switch (modifiers.move_setting) {
+                    .end => {}, // do nothing!
+                    .before => |before| if (before) |_| {} else {
+                        parser_state = .relpos_before;
+                        continue :nxt;
+                    },
+                    .after => |after| if (after) |_| {} else {
+                        parser_state = .relpos_after;
+                        continue :nxt;
                     },
                 }
-            };
-        } else if (current_arg[0] == '-') {
-            if (current_arg.len > 1) {
-                modifier_slice = current_arg[1..];
-            }
-        } else if (found_archive_path == null) {
-            found_archive_path = current_arg;
-            continue;
-        } else {
-            try files.append(current_arg);
-            continue;
-        }
 
-        for (modifier_slice) |modifier_char| {
-            if (!processModifier(modifier_char, &modifiers)) {
-                return;
-            }
-        }
-
-        // TODO: Figure out how to deal with multiple of these following settings!
-
-        // Process [relpos] if needed!
-        switch (modifiers.move_setting) {
-            .end => {}, // do nothing!
-            .before => |before| if (before == null) {
-                arg_index += 1;
-                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
-                modifiers.move_setting.before = args[arg_index];
+                continue :cur .count_gate;
             },
-            .after => |after| if (after == null) {
-                arg_index += 1;
+            .relpos_before => {
                 if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
-                modifiers.move_setting.after = args[arg_index];
+                modifiers.move_setting.before = arg;
+                continue :cur .count_gate;
             },
-        }
-
-        // Process [count] if needed!
-        if (modifiers.instance_to_delete == 0) {
-            arg_index += 1;
-            if (!checkOptionalArgsBounds(args, arg_index, "An [count]", "N")) return;
-            modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, args[arg_index], 10) catch {
-                logger.err("[count] must be a positive number, received '{s}'.", .{args[arg_index]});
-                return;
-            };
+            .relpos_after => {
+                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
+                modifiers.move_setting.after = arg;
+                continue :cur .count_gate;
+            },
+            .count_gate => {
+                // Process [count] if needed!
+                parser_state = if (modifiers.instance_to_delete == 0) .count else .normal;
+            },
+            .count => {
+                if (!checkOptionalArgsBounds(args, arg_index, "An [count]", "N")) return;
+                modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, arg, 10) catch {
+                    logger.err("[count] must be a positive number, received '{s}'.", .{ arg });
+                    return;
+                };
+                parser_state = .normal;
+            }
         }
     }
 
