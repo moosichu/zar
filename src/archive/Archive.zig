@@ -140,50 +140,15 @@ pub const CriticalError = error{
     TODO,
 };
 
-pub const IoError = error{
-    AccessDenied,
-    BrokenPipe,
-    ConnectionResetByPeer,
-    ConnectionTimedOut,
-    DiskQuota,
-    InputOutput,
-    IsDir,
-    NotOpenForReading,
-    InvalidArgument,
-    InvalidHandle,
-    OperationAborted,
-    SystemResources,
-    Unexpected,
-    Unseekable,
-    WouldBlock,
-    EndOfStream,
-    BadPathName,
-    DeviceBusy,
-    FileBusy,
-    FileLocksNotSupported,
-    FileNotFound,
-    FileTooBig,
-    InvalidUtf8,
-    LockViolation,
-    NameTooLong,
-    NetNameDeleted,
-    NetworkNotFound,
-    NoDevice,
-    NoSpaceLeft,
-    NotDir,
-    NotOpenForWriting,
-    PathAlreadyExists,
-    PipeBusy,
-    ProcessFdQuotaExceeded,
-    SharingViolation,
-    SymLinkLoop,
-    SystemFdQuotaExceeded,
-    InvalidWtf8,
-    AntivirusInterference,
-    ProcessNotFound,
-    SocketNotConnected,
-    Canceled,
-};
+pub const IoError =
+       fs.File.GetSeekPosError || fs.File.Reader.NoEofError
+    // || no known error sets for creating a file
+    || fs.File.OpenError
+    || fs.File.ReadError
+    || fs.File.SeekError
+    || fs.File.StatError
+    || fs.File.WriteError
+    ;
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
@@ -277,7 +242,7 @@ pub const Symbol = struct {
 // TODO: BSD symbol table interpretation is architecture dependent,
 // is there a way we can interpret this? (will be needed for
 // cross-compilation etc. could possibly take it as a spec?)
-// Using harcoding this information here is a bit of a hacky
+// Hardcoding this information here is a bit of a hacky
 // workaround in the short term - even though it is part of
 // the spec.
 const IntType = i32;
@@ -317,8 +282,8 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
 
 // The weird return type is so that we can distinguish between handled and unhandled IO errors,
 // i.e. if test_errors_handled is set to true, and raw calls to io operations will return in a compile failure
-pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, err_result: anytype) HandledIoError!@typeInfo(@TypeOf(err_result)).error_union.payload {
-    const unwrapped_result = err_result catch |err| {
+pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, fallible: anytype) HandledIoError!@typeInfo(@TypeOf(fallible)).error_union.payload {
+    const unwrapped_result = fallible catch |err| {
         return printFileIoError(context, file_name, err);
     };
     return unwrapped_result;
@@ -1377,7 +1342,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                         const current_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
                         const remainder = @as(u32, @intCast((self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment()));
                         seek_forward_amount = seek_forward_amount - remainder;
-                        try handleFileIoError(.accessing, self.name, reader.context.seekBy(remainder));
+                        try handleFileIoError(.seeking, self.name, reader.context.seekBy(remainder));
                     }
 
                     // TODO: error if negative (because spec defines this as a long, so should never be that large?)
