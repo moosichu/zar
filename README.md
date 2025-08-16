@@ -1,7 +1,3 @@
-> This project is no longer under active development, it was last successfully built and tested with zig version 0.12.0-dev.1468+e9a6197a8
-> The zig project is taking an alternate approach to archiving that is more tightly integrated with the linker in order to support incremental compilation of zig source when generating static libraries.
-
-
 [![CI](https://github.com/moosichu/zar/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/moosichu/zar/actions/workflows/ci.yml)
 
 This repo contains an in-progress attempt to write an [archiver](https://en.wikipedia.org/wiki/Ar_(Unix)) in [zig](https://github.com/ziglang/zig) in order to solve [this issue](https://github.com/ziglang/zig/issues/9828).
