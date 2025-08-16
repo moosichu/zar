@@ -525,7 +525,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.thin_archives) {
-        // TODO: support thing archives!
+        // TODO: support thin archives!
         return error.TODO;
     }
 

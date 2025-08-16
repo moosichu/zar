@@ -140,6 +140,8 @@ pub const CriticalError = error{
     TODO,
 };
 
+// TODO: This feels deeply, deeply wrong.
+// Should probably make this an error set union.
 pub const IoError = error{
     AccessDenied,
     BrokenPipe,
@@ -277,7 +279,7 @@ pub const Symbol = struct {
 // TODO: BSD symbol table interpretation is architecture dependent,
 // is there a way we can interpret this? (will be needed for
 // cross-compilation etc. could possibly take it as a spec?)
-// Using harcoding this information here is a bit of a hacky
+// Hardcoding this information here is a bit of a hacky
 // workaround in the short term - even though it is part of
 // the spec.
 const IntType = i32;
