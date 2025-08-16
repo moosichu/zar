@@ -332,9 +332,10 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
             return .gnu;
         }
     }
-
-    if (builtin.os.tag.isDarwin()) return .darwin;
     return .gnu;
+
+    // if (builtin.os.tag.isDarwin()) return .darwin;
+    // return .gnu;
 }
 
 pub fn init(
@@ -644,11 +645,11 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
             // is that we write an empty symbol table!
             // However - there is one exception to this, which is that llvm ar
             // does not generate the symbol table if we haven't just created
-            // the archive *and* we aren't running from a darwing host.
+            // the archive.
             // WHAT ?!
             const write_symbol_table = write_symbol_table: {
                 var result = self.modifiers.build_symbol_table;
-                if (!builtin.os.tag.isDarwin() and !self.created) {
+                if (!self.created) {
                     result = result and self.symbols.items.len != 0;
                 }
                 break :write_symbol_table result;
