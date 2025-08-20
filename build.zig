@@ -35,27 +35,11 @@ pub fn build(b: *std.Build) !void {
         .filters = if (test_filter != null) &.{test_filter.?} else &.{},
     });
 
-    // TODO: Figure this out!
-    // {
-    //     const zld_options = b.addOptions();
-    //     zld.addOptions("build_options", zld_options);
-    //     zld_options.addOption(bool, "enable_logging", false);
-    //     zld_options.addOption(bool, "enable_tracy", tracy != null);
-    // }
-
     const build_test_executable_only = b.option(bool, "build-tests", "Build tests but don't run them.") orelse false;
 
     const exe_options = b.addOptions();
     exe_mod.addOptions("build_options", exe_options);
     test_mod.addOptions("build_options", exe_options);
-
-    // const zld = b.createModule(.{
-    //     .source_file = .{ .path = "zld/src/Zld.zig" },
-    //     .dependencies = &[_]std.build.ModuleDependency{.{ .name = "build_options", .module = options_module }},
-    // });
-
-    // exe.addModule("Zld", zld);
-    // tests.addModule("Zld", zld);
 
     {
         const test_errors_handled = b.option(bool, "test-errors-handled", "Compile with this to confirm zar sends all io errors through the io error handler") orelse false;

@@ -221,7 +221,7 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
 }
 
 fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
-    // TODO: make sure modifers are only allowed for their supported mode of
+    // TODO(#63): make sure modifers are only allowed for their supported mode of
     // operation!
     switch (mode) {
         .ar => switch (modifier_char) {
@@ -234,7 +234,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
             'L' => modifiers.quick_append_members = true,
             'N' => modifiers.instance_to_delete = 0,
             'o' => modifiers.preserve_original_dates = true,
-            'O' => unreachable, // TODO: implement this!
+            'O' => unreachable, // TODO(#69): implement this!
             'P' => modifiers.use_full_paths_when_matching = true,
             'r' => modifiers.sort_symbol_table = .set_true,
             'R' => modifiers.sort_symbol_table = .set_false,
@@ -245,7 +245,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
             'U' => modifiers.use_real_timestamps_and_ids = true,
             'v' => modifiers.verbose = true,
             'V' => modifiers.show_version = true,
-            // TODO: Ensure all modifiers we need to handle are handled!
+            // TODO(#64): Ensure all modifiers we need to handle are handled!
             else => {
                 printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
                 return false;
@@ -258,7 +258,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
             // this is in contrast to ar which always shows help over version if it's present
             // matching this specific behaviour may be overkill, but would rather
             // aggressively match llvm on this front as much as possible by default
-            // TODO: write tests for these cases of ordering modifiers
+            // TODO(#65): write tests for these cases of ordering modifiers
             'v' => if (!modifiers.help) {
                 modifiers.show_version = true;
             },
@@ -356,9 +356,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     var files = std.ArrayList([]const u8).init(allocator);
     defer files.deinit();
 
-    const ParseState = enum {
-        normal, relpos_before, relpos_after, count_gate, count
-    };
+    const ParseState = enum { normal, relpos_before, relpos_after, count_gate, count };
     var parser_state: ParseState = .normal;
     nxt: for (args[offset..], offset..) |arg, arg_index| {
         cur: switch (parser_state) {
@@ -454,10 +452,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                     if (!processModifier(modifier_char, &modifiers)) {
                         return;
                     }
-                } 
-
-                // TODO: Figure out how to deal with multiple of these following settings!
-                // (modifiers.move_setting, modifiers.instance_to_delete)
+                }
 
                 // Process [relpos] if needed!
                 switch (modifiers.move_setting) {
@@ -491,11 +486,11 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             .count => {
                 if (!checkOptionalArgsBounds(args, arg_index, "An [count]", "N")) return;
                 modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, arg, 10) catch {
-                    logger.err("[count] must be a positive number, received '{s}'.", .{ arg });
+                    logger.err("[count] must be a positive number, received '{s}'.", .{arg});
                     return;
                 };
                 parser_state = .normal;
-            }
+            },
         }
     }
 
@@ -510,22 +505,22 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.move_setting != .end) {
-        // TODO: Implement this!
+        // TODO(#66): Implement this!
         return error.TODO;
     }
 
     if (modifiers.instance_to_delete > 1) {
-        // TODO: Implement this!
+        // TODO(#67): Implement this!
         return error.TODO;
     }
 
     if (modifiers.use_full_paths_when_matching) {
-        // TODO: Implement this!
+        // TODO(#68): Implement this!
         return error.TODO;
     }
 
     if (modifiers.thin_archives) {
-        // TODO: support thin archives!
+        // TODO(#70): support thin archives!
         return error.TODO;
     }
 
@@ -620,8 +615,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .quick_append => {
             logger.err("quick append still needs to be implemented!\n", .{});
-            // TODO: ensure modifiers.quick_append_members is respected!
-            return error.TODO;
+            return error.TODO; // #71
         },
         .ranlib => {
             const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{ .mode = .read_write }));
@@ -634,9 +628,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         .extract => {
             logger.err("extract still needs to be implemented!\n", .{});
             if (modifiers.preserve_original_dates) {
-                return error.TODO; // make sure this is implemented!
+                return error.TODO; // #74
             }
-            return error.TODO;
+            return error.TODO; // #73
         },
         .undefined => {
             // This case is already handled earlier!
