@@ -996,7 +996,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             error.OutOfMemory => return error.OutOfMemory,
             else => @as(IoError, @errorCast(e)),
         };
-        var archived_file = ArchivedFile{
+        const archived_file = ArchivedFile{ // was var
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try handleFileIoError(.reading, file_name, bytes_or_io_error),
@@ -1008,11 +1008,11 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             },
         };
 
-        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
+        // const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0);
+            // try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0); // Hacking out the zld stuff so this is borked right now.
         }
 
         // A trie-based datastructure would be better for this!
@@ -1423,7 +1423,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             },
         };
 
-        const offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+        // const offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
 
         if (self.inferred_archive_type == .gnuthin) {
             var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
@@ -1435,13 +1435,14 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         }
 
         if (self.modifiers.build_symbol_table) {
-            const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+            // const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
             // TODO: Actually handle these errors!
-            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
-                return error.TODO;
-            };
+            // … and get this working in the first place!
+            //self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
+            //    return error.TODO;
+            //};
 
-            try handleFileIoError(.seeking, self.name, reader.context.seekTo(post_offset_hack));
+            // try handleFileIoError(.seeking, self.name, reader.context.seekTo(post_offset_hack));
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
