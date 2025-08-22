@@ -141,7 +141,7 @@ pub const CriticalError = error{
 };
 
 pub const IoError =
-       fs.File.GetSeekPosError || fs.File.Reader.NoEofError
+       fs.File.GetSeekPosError || fs.File.DeprecatedReader.NoEofError
     // || no known error sets for creating a file
     || fs.File.OpenError
     || fs.File.ReadError
@@ -815,7 +815,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
 
     var magic: [4]u8 = undefined;
-    _ = try handleFileIoError(.reading, archived_file.name, file.reader().read(&magic));
+    _ = try handleFileIoError(.reading, archived_file.name, file.deprecatedReader().read(&magic));
 
     try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
 
@@ -992,7 +992,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
         const timestamp = @as(u128, @intCast(@divFloor(mtime, std.time.ns_per_s)));
 
         // Extract critical error from error set - so IO errors can be handled seperately
-        const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, @alignOf(u64), null) catch |e| switch (e) {
+        const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, std.mem.Alignment.of(u64), null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
             else => @as(IoError, @errorCast(e)),
         };
@@ -1031,7 +1031,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
     const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
-    const reader = self.file.reader();
+    const reader = self.file.deprecatedReader();
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
@@ -1414,7 +1414,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
             .contents = Contents{
-                .bytes = try allocator.alignedAlloc(u8, @alignOf(u64), seek_forward_amount),
+                .bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.of(u64), seek_forward_amount),
                 .length = seek_forward_amount,
                 .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_mode, " "), 10),
                 .timestamp = timestamp,
@@ -1429,7 +1429,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
-            try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
+            try handleFileIoError(.reading, trimmed_archive_name, thin_file.deprecatedReader().readNoEof(parsed_file.contents.bytes));
         } else {
             try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
         }
