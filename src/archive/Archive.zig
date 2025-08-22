@@ -147,7 +147,7 @@ pub const IoError =
     || fs.File.ReadError
     || fs.File.SeekError
     || fs.File.StatError
-    || fs.File.WriteError
+    || fs.File.WriteError || std.io.Writer.Error
     ;
 
 // All archive files start with this magic string
