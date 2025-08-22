@@ -147,7 +147,7 @@ pub const IoError =
     || fs.File.ReadError
     || fs.File.SeekError
     || fs.File.StatError
-    || fs.File.WriteError || std.io.Writer.Error
+    || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError
     ;
 
 // All archive files start with this magic string
@@ -220,13 +220,13 @@ pub const Contents = struct {
 
     // TODO: deallocation
 
-    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
+    pub fn write(self: *const Contents, out_stream: *std.Io.Writer, stderr: anytype) !void {
         try out_stream.writeAll(self.bytes);
         _ = stderr;
     }
 };
 
-// An internal represantion of files being archived
+// An internal represention of files being archived
 pub const ArchivedFile = struct {
     name: []const u8,
     contents: Contents,
@@ -407,7 +407,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     // as fs.File.Writer has a "pos" field and a buffer now.
     var writer_buf: [4096]u8 = undefined;
     var buffered_writer = self.file.writer(&writer_buf);// TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
-    const writer = buffered_writer.interface;
+    const writer = &buffered_writer.interface;
 
     try handleFileIoError(.writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
 
@@ -479,7 +479,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
-            var string_table = std.ArrayList(u8).init(allocator);
+            var string_table = std.array_list.Managed(u8).init(allocator);
             defer string_table.deinit();
 
             // Generate the complete string table
@@ -722,19 +722,19 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try handleFileIoError(.writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes(0, self.calculatePadding(buffered_writer.pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll(0, self.calculatePadding(buffered_writer.pos)));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try handleFileIoError(.writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes('\n', self.calculatePadding(buffered_writer.pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll('\n', self.calculatePadding(buffered_writer.pos)));
         }
     }
 
-    try handleFileIoError(.writing, self.name, buffered_writer.flush());
+    try handleFileIoError(.writing, self.name, buffered_writer.end());
 
-    // Truncate the file size
-    try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.pos));
+    // Truncate the file size (now done by call to end())
+    // try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.pos));
 }
 
 pub fn deinit(self: *Archive) void {
