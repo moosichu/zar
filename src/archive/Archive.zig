@@ -385,7 +385,7 @@ fn calculatePadding(self: *Archive, file_pos: usize) usize {
     return padding;
 }
 
-const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(std.io.BufferedWriter(4096, std.fs.File.Writer));
+// const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(std.io.BufferedWriter(4096, std.fs.File.Writer));
 
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
@@ -403,9 +403,11 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     // Overwrite all contents
     try handleFileIoError(.seeking, self.name, self.file.seekTo(0));
 
-    // We wrap the buffered writer so that can we can track file position more easily
-    var buffered_writer = TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
-    const writer = buffered_writer.writer();
+    // TrackingBufferedWriter no longer appears to be necessary,
+    // as fs.File.Writer has a "pos" field and a buffer now.
+    var writer_buf: [4096]u8 = undefined;
+    var buffered_writer = self.file.writer(&writer_buf);// TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
+    const writer = buffered_writer.interface;
 
     try handleFileIoError(.writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
 
@@ -688,7 +690,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
             if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
-                const padding = self.calculatePadding(buffered_writer.file_pos + header_buffer.len + file.name.len);
+                const padding = self.calculatePadding(buffered_writer.pos + header_buffer.len + file.name.len);
 
                 // BSD format: Just write the length of the name in header
                 _ = std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding}) catch |e| switch (e) {
@@ -720,19 +722,19 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try handleFileIoError(.writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes(0, self.calculatePadding(buffered_writer.file_pos)));
+            try handleFileIoError(.writing, self.name, writer.writeByteNTimes(0, self.calculatePadding(buffered_writer.pos)));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try handleFileIoError(.writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes('\n', self.calculatePadding(buffered_writer.file_pos)));
+            try handleFileIoError(.writing, self.name, writer.writeByteNTimes('\n', self.calculatePadding(buffered_writer.pos)));
         }
     }
 
     try handleFileIoError(.writing, self.name, buffered_writer.flush());
 
     // Truncate the file size
-    try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.file_pos));
+    try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.pos));
 }
 
 pub fn deinit(self: *Archive) void {
