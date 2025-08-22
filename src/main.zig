@@ -105,8 +105,8 @@ pub const ranlib_overview =
     \\
 ;
 
-var stdout_buf: [0]u8 = undefined;
-var stderr_buf: [0]u8 = undefined;
+var stdout_buf: [1024]u8 = undefined;
+var stderr_buf: [1024]u8 = undefined;
 var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
 var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
 const stdout = &stdout_writer.interface;
