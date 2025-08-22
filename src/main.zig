@@ -131,6 +131,7 @@ pub const Mode = enum { ar, ranlib };
 pub var mode: Mode = .ar;
 
 fn printHelp(stdout: *std.io.Writer) void {
+    defer stdout.flush();
     _ = switch (mode) {
         .ar => stdout.print(zar_overview, .{}),
         .ranlib => stdout.print(ranlib_overview, .{}),
@@ -138,6 +139,7 @@ fn printHelp(stdout: *std.io.Writer) void {
 }
 
 fn printVersion(stdout: *std.io.Writer) void {
+    defer stdout.flush();
     const target = builtin.target;
     const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
     stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
