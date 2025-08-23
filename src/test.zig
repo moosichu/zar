@@ -142,11 +142,49 @@ const TestSequence = struct {
 
     const TestOperation = union(enum) {
         const BuildObjectFile = struct {
+            string_allocation: []u8,
+            symbols: [][]const u8,
             object_name: []const u8,
-            symbols: []const []const u8,
+            pub fn init(allocator: Allocator, object_name: []const u8, symbols: []const []const u8) !BuildObjectFile {
+                const owned_symbols = try allocator.alloc([]const u8, symbols.len);
+
+                var string_allocation = string_allocation: {
+                    var string_allocation_size = object_name.len;
+                    for (symbols) |symbol| {
+                        string_allocation_size += symbol.len;
+                    }
+                    break :string_allocation try allocator.alloc(u8, string_allocation_size);
+                };
+                errdefer allocator.free(string_allocation);
+
+                var current_index: usize = 0;
+                const owned_object_name = owned_object_name: {
+                    const next_index = current_index + object_name.len;
+                    defer current_index = next_index;
+                    const object_name_slice = string_allocation[current_index..next_index];
+                    @memcpy(object_name_slice, object_name);
+                    break :owned_object_name object_name_slice;
+                };
+
+                for (symbols, owned_symbols) |symbol, *owned_symbol| {
+                    const next_index = current_index + symbol.len;
+                    defer current_index = next_index;
+                    const symbol_slice = string_allocation[current_index..next_index];
+                    @memcpy(symbol_slice, symbol);
+                    owned_symbol.* = symbol_slice;
+                }
+
+                const result: BuildObjectFile = .{
+                    .string_allocation = string_allocation,
+                    .object_name = owned_object_name,
+                    .symbols = owned_symbols,
+                };
+
+                return result;
+            }
             pub fn deinit(build_object_file: *BuildObjectFile, allocator: Allocator) void {
-                _ = build_object_file;
-                _ = allocator;
+                allocator.free(build_object_file.string_allocation);
+                allocator.free(build_object_file.symbols);
             }
         };
         const TestArchiveOperation = struct {
@@ -160,6 +198,40 @@ const TestSequence = struct {
                         return test_archive_operation.arguments;
                     },
                 }
+            }
+
+            pub fn init(
+                allocator: Allocator,
+                arguments: []const []const u8,
+            ) !TestArchiveOperation {
+                var owned_arguments = try allocator.alloc([]const u8, arguments.len + 1);
+                errdefer allocator.free(owned_arguments);
+
+                var string_allocation = string_allocation: {
+                    var string_size: usize = 0;
+                    for (arguments) |argument| {
+                        string_size += argument.len;
+                    }
+                    break :string_allocation try allocator.alloc(u8, string_size);
+                };
+                errdefer allocator.free(string_allocation);
+
+                {
+                    var current_index: usize = 0;
+                    for (owned_arguments[1..], arguments) |*owned_argument, argument| {
+                        const next_index = current_index + argument.len;
+                        defer current_index = next_index;
+                        const argument_slice = string_allocation[current_index..next_index];
+                        @memcpy(argument_slice, argument);
+                        owned_argument.* = argument_slice;
+                    }
+                }
+
+                const result: TestOperation.TestArchiveOperation = .{
+                    .arguments = owned_arguments,
+                    .string_allocation = string_allocation,
+                };
+                return result;
             }
 
             pub fn deinit(test_archive_operation: *TestArchiveOperation, allocator: Allocator) void {
@@ -189,10 +261,11 @@ const TestSequence = struct {
         object_name: []const u8,
         symbols: []const []const u8,
     ) !void {
-        const build_object_file: TestOperation.BuildObjectFile = .{
-            .object_name = object_name,
-            .symbols = symbols,
-        };
+        const build_object_file = try TestOperation.BuildObjectFile.init(
+            allocator,
+            object_name,
+            symbols,
+        );
         try test_sequence.test_operations.append(allocator, .{
             .build_object_file = build_object_file,
         });
@@ -203,33 +276,7 @@ const TestSequence = struct {
         allocator: Allocator,
         arguments: []const []const u8,
     ) !void {
-        var owned_arguments = try allocator.alloc([]const u8, arguments.len + 1);
-        errdefer allocator.free(owned_arguments);
-
-        var string_allocation = string_allocation: {
-            var string_size: usize = 0;
-            for (arguments) |argument| {
-                string_size += argument.len;
-            }
-            break :string_allocation try allocator.alloc(u8, string_size);
-        };
-        errdefer allocator.free(string_allocation);
-
-        {
-            var current_index: usize = 0;
-            for (owned_arguments[1..], arguments) |*owned_argument, argument| {
-                const next_index = current_index + argument.len;
-                defer current_index = next_index;
-                const argument_slice = string_allocation[current_index..next_index];
-                @memcpy(argument_slice, argument);
-                owned_argument.* = argument_slice;
-            }
-        }
-
-        const test_archive_operation: TestOperation.TestArchiveOperation = .{
-            .arguments = owned_arguments,
-            .string_allocation = string_allocation,
-        };
+        const test_archive_operation = try TestOperation.TestArchiveOperation.init(allocator, arguments);
         try test_sequence.test_operations.append(allocator, .{
             .test_archive_operation = test_archive_operation,
         });
@@ -640,8 +687,8 @@ fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_i
         logger.err("Failed to open archive file {s} in cwd {s}, full path: {s}/{s}, err {}", .{
             "test_archive.a",
             test_dir_info.cwd,
-            "test_archive.a",
             test_dir_info.cwd,
+            "test_archive.a",
             err,
         });
         return err;
