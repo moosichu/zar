@@ -155,6 +155,14 @@ test "Test Archive With Symbols Basic" {
         const arguments = [_][]const u8{ "s", archive_name };
         try test_sequence.testArchiveOperation(allocator, &arguments);
     }
+    {
+        const arguments = [_][]const u8{ "p", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "t", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
 
     const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
     try test_sequence.execute(allocator, execution_options);
@@ -265,6 +273,18 @@ test "Test Archive Sorted" {
     }
     {
         const arguments = [_][]const u8{ "s", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "p", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "t", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "d", archive_name, object_names[3], object_names[7] };
         try test_sequence.testArchiveOperation(allocator, &arguments);
     }
 
