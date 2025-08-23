@@ -43,76 +43,196 @@ const no_dir = "test/data/none";
 const always_invoke_zar_as_child_process = false;
 
 test "Test Archive Text Basic" {
-    const test1_dir = "test/data/test1";
-    const test1_names = [_][]const u8{ "input1.txt", "input2.txt" };
-    const test1_symbols = no_symbols;
+    const test_path = "test/data/test1";
+    const test_names = [_][]const u8{ "input1.txt", "input2.txt" };
+
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, test1_dir, &test1_names, &test1_symbols, .{});
+
+    var test1_dir = try fs.cwd().openDir(test_path, .{});
+    defer test1_dir.close();
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+
+    for (test_names) |test1_name| {
+        try test_sequence.copyTestFile(allocator, test1_dir, test1_name);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ test_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(allocator, execution_options);
 }
 
 test "Test Archive Text With Long Filenames" {
     // Due to the fixed-size limits for filenames in the standard ar format,
     // this tests that the different ar-type specific extensions for dealing
     // with that properly work.
-    const test2_dir = "test/data/test2";
-    const test2_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
-    const test2_symbols = no_symbols;
+    const test_path = "test/data/test2";
+    const test_names = [_][]const u8{ "input1.txt", "input2.txt", "input3_that_is_also_a_much_longer_file_name.txt", "input4_that_is_also_a_much_longer_file_name.txt" };
+
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, test2_dir, &test2_names, &test2_symbols, .{});
+
+    var test_dir = try fs.cwd().openDir(test_path, .{});
+    defer test_dir.close();
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+
+    for (test_names) |test2_name| {
+        try test_sequence.copyTestFile(allocator, test_dir, test2_name);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ test_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(allocator, execution_options);
 }
 
 test "Test MacOS aarch64" {
-    const test1_dir = "test/data/test_macos_aarch64";
-    const test1_names = [_][]const u8{"a.o"};
-    const test1_symbols = no_symbols;
+    const test_path = "test/data/test_macos_aarch64";
+    const test_names = [_][]const u8{"a.o"};
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, test1_dir, &test1_names, &test1_symbols, .{
-        .targets = &[_]Target{
-            .{
-                .architecture = .aarch64,
-                .operating_system = .macos,
-            },
+
+    var test_dir = try fs.cwd().openDir(test_path, .{});
+    defer test_dir.close();
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+
+    for (test_names) |test2_name| {
+        try test_sequence.copyTestFile(allocator, test_dir, test2_name);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ test_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    var execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    execution_options.targets = &[_]Target{
+        .{
+            .architecture = .aarch64,
+            .operating_system = .macos,
         },
-    });
+    };
+    try test_sequence.execute(allocator, execution_options);
 }
 
 test "Test Archive With Symbols Basic" {
-    const test4_names = [_][]const u8{"input1.o"};
-    const test4_symbols = [_][]const []const u8{
+    const object_names = [_][]const u8{"input1.o"};
+    const object_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
     };
+
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, no_dir, &test4_names, &test4_symbols, .{});
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+    for (object_names, object_symbols) |object_name, symbols| {
+        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "rS", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "s", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(allocator, execution_options);
 }
 
 test "Test Archive With Long Names And Symbols" {
-    const test5_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
-    const test5_symbols = [_][]const []const u8{
+    const object_names = [_][]const u8{ "input1.o", "input2.o", "input3_that_is_also_a_much_longer_file_name.o" };
+    const object_symbols = [_][]const []const u8{
         &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
         &[_][]const u8{ "input2_symbol1", "input2_symbol2_that_is_also_longer_symbol", "input2_symbol3" },
         &[_][]const u8{ "input3_that_is_also_a_much_longer_file_name_symbol1", "input3_symbol2_that_is_also_longer_symbol", "input3_symbol3_that_is_also_longer_symbol" },
     };
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, no_dir, &test5_names, &test5_symbols, .{});
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+    for (object_names, object_symbols) |object_name, symbols| {
+        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "rS", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "s", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(allocator, execution_options);
 }
 
 test "Test Archive Stress Test" {
     // Generate 55 different files with an arbitrary number of symbols
     const test6_filecount = 55;
     const test6_symcount = 15;
-    var test6_names: [test6_filecount][]u8 = undefined;
-    var test6_symbols: [test6_filecount][][]u8 = undefined;
+    var object_names: [test6_filecount][]u8 = undefined;
+    var object_symbols: [test6_filecount][][]u8 = undefined;
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    try initialiseTestData(arena.allocator(), &test6_names, &test6_symbols, test6_symcount);
-    try doStandardTests(std.testing.allocator, no_dir, &test6_names, &test6_symbols, .{});
+    const allocator = arena.allocator();
+    try initialiseTestData(allocator, &object_names, &object_symbols, test6_symcount);
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+    for (object_names, object_symbols) |object_name, symbols| {
+        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "rS", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "s", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const testing_allocator = std.testing.allocator;
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(testing_allocator, execution_options);
 }
 
 test "Test Archive Sorted" {
-    // Confirm that our archives default files & their symbols in the correct way
-    // for each target.
-    const test_sort_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
-    const test_sort = [_][]const []const u8{
+    const object_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
+    const object_symbols = [_][]const []const u8{
         &[_][]const u8{ "ddd", "aaa" },
         &[_][]const u8{ "cccc", "ddd", "aaaa" },
         &[_][]const u8{ "z", "aa", "a" },
@@ -125,9 +245,31 @@ test "Test Archive Sorted" {
         &[_][]const u8{ "bB", "aB", "cB" },
         &[_][]const u8{ "_11", "_12", "_13" },
     };
-    // TODO: remove redundancy maybe by excluding parsing component of this test?
+
     const allocator = std.testing.allocator;
-    try doStandardTests(allocator, no_dir, &test_sort_names, &test_sort, .{});
+
+    var test_sequence: TestSequence = .{};
+    defer test_sequence.deinit(allocator);
+    for (object_names, object_symbols) |object_name, symbols| {
+        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+    }
+
+    const archive_name = "test_archive.a";
+    {
+        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "rS", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+    {
+        const arguments = [_][]const u8{ "s", archive_name };
+        try test_sequence.testArchiveOperation(allocator, &arguments);
+    }
+
+    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
+    try test_sequence.execute(allocator, execution_options);
 }
 
 const TestSequence = struct {
@@ -141,6 +283,25 @@ const TestSequence = struct {
     };
 
     const TestOperation = union(enum) {
+        const CopyTestFile = struct {
+            src_dir: fs.Dir,
+            file_name: []u8,
+            pub fn init(allocator: Allocator, src_dir: fs.Dir, file_name: []const u8) !CopyTestFile {
+                const owned_file_name = try allocator.alloc(u8, file_name.len);
+                @memcpy(owned_file_name, file_name);
+                errdefer allocator.free(owned_file_name);
+
+                const result: CopyTestFile = .{
+                    .src_dir = src_dir,
+                    .file_name = owned_file_name,
+                };
+
+                return result;
+            }
+            pub fn deinit(copy_test_file: *CopyTestFile, allocator: Allocator) void {
+                allocator.free(copy_test_file.file_name);
+            }
+        };
         const BuildObjectFile = struct {
             string_allocation: []u8,
             symbols: [][]const u8,
@@ -247,13 +408,33 @@ const TestSequence = struct {
                 .test_archive_operation => |*test_archive_operation| {
                     test_archive_operation.deinit(allocator);
                 },
+                .copy_test_file => |*copy_test_file| {
+                    copy_test_file.deinit(allocator);
+                },
             }
         }
         build_object_file: BuildObjectFile,
         test_archive_operation: TestArchiveOperation,
+        copy_test_file: CopyTestFile,
     };
 
     test_operations: std.ArrayListUnmanaged(TestOperation) = .{},
+
+    pub fn copyTestFile(
+        test_sequence: *TestSequence,
+        allocator: Allocator,
+        src_dir: std.fs.Dir,
+        file_name: []const u8,
+    ) !void {
+        const copy_test_file = try TestOperation.CopyTestFile.init(
+            allocator,
+            src_dir,
+            file_name,
+        );
+        try test_sequence.test_operations.append(allocator, .{
+            .copy_test_file = copy_test_file,
+        });
+    }
 
     pub fn buildObjectFile(
         test_sequence: *TestSequence,
@@ -306,7 +487,7 @@ const TestSequence = struct {
                 defer if (!cancel_cleanup) test_dir_info.cleanup();
                 errdefer |err| {
                     cancel_cleanup = true;
-                    logger.err("Failed to do archiving operation with files for target ({s}): {}", .{ target.targetToArgument(), err });
+                    logger.err("Failed archiving test for target ({s}): {}", .{ target.targetToArgument(), err });
                 }
 
                 for (test_sequence.test_operations.items) |*test_operation| {
@@ -323,47 +504,16 @@ const TestSequence = struct {
                         .test_archive_operation => |*test_archive_operation| {
                             try compareArchivers(test_archive_operation.getArchiveArguments(llvm_format_option), test_dir_info);
                         },
+                        .copy_test_file => |copy_test_file| {
+                            try copy_test_file.src_dir.copyFile(copy_test_file.file_name, test_dir_info.llvm_ar_wd, copy_test_file.file_name, .{});
+                            try copy_test_file.src_dir.copyFile(copy_test_file.file_name, test_dir_info.zar_wd, copy_test_file.file_name, .{});
+                        },
                     }
                 }
             }
         }
     }
 };
-
-test "Test Sequence Example Test" {
-    const object_names = [_][]const u8{ "dddd.o", "eeee.o", "ccccc.o", "aaaaaaaa.o", "aa.o", "cccc.o", "aaaa.o", "bbbb.o", "cc.o", "bb.o", "zz.o" };
-    const object_symbols = [_][]const []const u8{
-        &[_][]const u8{ "ddd", "aaa" },
-        &[_][]const u8{ "cccc", "ddd", "aaaa" },
-        &[_][]const u8{ "z", "aa", "a" },
-        &[_][]const u8{ "agsg", "ssss", "aaaa" },
-        &[_][]const u8{ "_1_2_3", "__1", "_00000" },
-        &[_][]const u8{ "AA", "aa", "BB" },
-        &[_][]const u8{ "aa", "AA", "BB" },
-        &[_][]const u8{ "BB", "AA", "aa" },
-        &[_][]const u8{ "_123", "_22", "_12" },
-        &[_][]const u8{ "bB", "aB", "cB" },
-        &[_][]const u8{ "_11", "_12", "_13" },
-    };
-
-    const allocator = std.testing.allocator;
-
-    var test_sequence: TestSequence = .{};
-    defer test_sequence.deinit(allocator);
-    for (object_names, object_symbols) |object_name, symbols| {
-        try test_sequence.buildObjectFile(allocator, object_name, symbols);
-    }
-
-    const archive_name = "test_archive.a";
-    {
-        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
-        try test_sequence.testArchiveOperation(allocator, &arguments);
-    }
-
-    errdefer logger.err("We did not error", .{});
-    const execution_options = TestSequence.ExecutionOptions.standardExecutionOptions();
-    try test_sequence.execute(allocator, execution_options);
-}
 
 test "Test Argument Errors" {
     if (builtin.target.os.tag == .windows) {
@@ -536,108 +686,6 @@ const TestDirInfo = struct {
     }
 };
 
-const StandardTestOptions = struct {
-    targets: ?[]const Target = null,
-};
-
-pub fn doStandardTests(framework_allocator: Allocator, comptime test_dir_path: []const u8, file_names: []const []const u8, symbol_names: []const []const []const u8, options: StandardTestOptions) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-    const operation = "rc";
-
-    const lTargets = if (options.targets) |dTargets| dTargets else &targets;
-
-    for (lTargets) |target| {
-        var test_dir_info = try TestDirInfo.getInfo();
-        // if a test is going to fail anyway, this is a useful way to debug it for now..
-        var cancel_cleanup = false;
-        defer if (!cancel_cleanup) test_dir_info.cleanup();
-        errdefer |err| {
-            cancel_cleanup = true;
-            logger.err("Failed to do archiving operation with files for target ({s}): {}", .{ target.targetToArgument(), err });
-        }
-
-        // Create an archive with llvm ar & zar and confirm that the outputs match
-        // byte-for-byte.
-        try copyAssetsToTestDirectory(test_dir_path, file_names, test_dir_info);
-        const llvm_format = target.operating_system.toDefaultLlvmFormat();
-        if (symbol_names.len > 0) {
-            try generateCompiledFilesWithSymbols(framework_allocator, target, file_names, symbol_names, test_dir_info);
-        }
-        {
-            errdefer |err| {
-                logger.err("Tests failed with explicitly provided archive format ({}): {}", .{ llvm_format, err });
-            }
-            // Create an archive explicitly with the format for the target operating system
-            try doLlvmArchiveOperationLegacy(llvm_format, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(target, framework_allocator, llvm_format, file_names, symbol_names, test_dir_info);
-            try testArchiveCreation(llvm_format, file_names, test_dir_info);
-            try testSymbolStrippingAndRanlib(test_dir_info);
-            try test_dir_info.zar_wd.deleteFile("test_archive.a");
-            try test_dir_info.llvm_ar_wd.deleteFile("test_archive.a");
-        }
-
-        {
-            errdefer |err| {
-                logger.err("Tests failed with implicit archive format: {}", .{err});
-            }
-            // Create an archive implicitly with the format for the target operating system
-            try doLlvmArchiveOperationLegacy(.implicit, operation, file_names, test_dir_info);
-            try testParsingOfLlvmGeneratedArchive(target, framework_allocator, .implicit, file_names, symbol_names, test_dir_info);
-            try testArchiveCreation(.implicit, file_names, test_dir_info);
-            try testSymbolStrippingAndRanlib(test_dir_info);
-            try test_dir_info.zar_wd.deleteFile("test_archive.a");
-            try test_dir_info.llvm_ar_wd.deleteFile("test_archive.a");
-        }
-    }
-}
-
-fn testSymbolStrippingAndRanlib(test_dir_info: TestDirInfo) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-    {
-        errdefer |err| {
-            logger.err("Failed symbol stripping: {}", .{err});
-        }
-        const operation = "rS";
-        try doZarArchiveOperationLegacy(.implicit, operation, &no_files, test_dir_info);
-        try doLlvmArchiveOperationLegacy(.implicit, operation, &no_files, test_dir_info);
-
-        try compareGeneratedArchives(test_dir_info);
-    }
-
-    {
-        errdefer |err| {
-            logger.err("Failed acting as ranlib: {}", .{err});
-        }
-        const operation = "s";
-        try doZarArchiveOperationLegacy(.implicit, operation, &no_files, test_dir_info);
-        try doLlvmArchiveOperationLegacy(.implicit, operation, &no_files, test_dir_info);
-
-        try compareGeneratedArchives(test_dir_info);
-    }
-}
-
-fn testArchiveCreation(format: LlvmFormat, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-
-    errdefer |err| {
-        logger.err("Failed create archive with zar that matched llvm with target format ({}): {}", .{ format, err });
-    }
-    const operation = "rc";
-    try doZarArchiveOperationLegacy(format, operation, file_names, test_dir_info);
-    try compareGeneratedArchives(test_dir_info);
-}
-
-fn testParsingOfLlvmGeneratedArchive(target: Target, framework_allocator: Allocator, format: LlvmFormat, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
-    errdefer |err| {
-        logger.err("Failed to get zar to parse file generated with the format ({}): {}", .{ format, err });
-    }
-
-    try testArchiveParsing(target, framework_allocator, test_dir_info, file_names, symbol_names);
-}
-
 fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
     const tracy = trace(@src());
     defer tracy.end();
@@ -675,100 +723,6 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
             const zig_ar_byte = zig_ar_buffer[index];
             try testing.expectEqual(llvm_ar_byte, zig_ar_byte);
         }
-    }
-}
-
-fn testArchiveParsing(target: Target, framework_allocator: Allocator, test_dir_info: TestDirInfo, file_names: []const []const u8, symbol_names: []const []const []const u8) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-    const test_dir = test_dir_info.llvm_ar_wd;
-
-    const archive_file = test_dir.openFile("test_archive.a", .{ .mode = .read_only }) catch |err| {
-        logger.err("Failed to open archive file {s} in cwd {s}, full path: {s}/{s}, err {}", .{
-            "test_archive.a",
-            test_dir_info.cwd,
-            test_dir_info.cwd,
-            "test_archive.a",
-            err,
-        });
-        return err;
-    };
-    defer archive_file.close();
-
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-
-    const testing_allocator = arena.allocator();
-
-    var archive = try Archive.init(testing_allocator, test_dir, archive_file, "test_archive.a", Archive.ArchiveType.ambiguous, .{}, false);
-    defer archive.deinit();
-    try archive.parse();
-
-    var memory_buffer = try framework_allocator.alloc(u8, 1024 * 1024);
-    defer framework_allocator.free(memory_buffer);
-    for (file_names, 0..) |file_name, index| {
-        try testing.expectEqualStrings(file_name, archive.files.items[index].name);
-        const file = try test_dir.openFile(file_name, .{});
-        defer file.close();
-
-        const reader = file.reader();
-
-        var current_start_pos: u64 = 0;
-        while (true) {
-            const num_read = try reader.read(memory_buffer);
-            if (num_read == 0) {
-                break;
-            }
-            try testing.expectEqualStrings(archive.files.items[index].contents.bytes[current_start_pos .. current_start_pos + num_read], memory_buffer[0..num_read]);
-            current_start_pos = current_start_pos + num_read;
-        }
-    }
-
-    if (target.operating_system == .macos) {
-        // TODO: darwin files are sorted by default, we need to make sure our
-        // test can account for this!
-        return;
-    }
-
-    var current_index = @as(u32, 0);
-    for (symbol_names, 0..) |symbol_names_in_file, file_index| {
-        for (symbol_names_in_file) |symbol_name| {
-            const parsed_symbol = archive.symbols.items[current_index];
-            var parsed_symbol_name = parsed_symbol.name;
-            // darwin targets will prepend symbol names with underscores
-            if (target.operating_system == .macos) {
-                try testing.expectEqual(parsed_symbol_name[0], '_');
-                parsed_symbol_name = parsed_symbol_name[1..parsed_symbol_name.len];
-            }
-            try testing.expectEqualStrings(parsed_symbol_name, symbol_name);
-            try testing.expectEqualStrings(archive.files.items[parsed_symbol.file_index].name, file_names[file_index]);
-            current_index = current_index + 1;
-        }
-    }
-}
-
-fn copyAssetsToTestDirectory(comptime test_src_dir_path: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-    var test_src_dir = fs.cwd().openDir(test_src_dir_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    defer test_src_dir.close();
-
-    for (file_names) |test_file| {
-        std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.tmp_dir.dir, test_file, .{}) catch |err| switch (err) {
-            error.FileNotFound => continue,
-            else => return err,
-        };
-        std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.zar_wd, test_file, .{}) catch |err| switch (err) {
-            error.FileNotFound => continue,
-            else => return err,
-        };
-        std.fs.Dir.copyFile(test_src_dir, test_file, test_dir_info.llvm_ar_wd, test_file, .{}) catch |err| switch (err) {
-            error.FileNotFound => continue,
-            else => return err,
-        };
     }
 }
 
@@ -830,45 +784,10 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     }
 }
 
-fn doZarArchiveOperationLegacy(format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    const allocator = std.testing.allocator;
-
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
-
-    try argv.append(format.llvmFormatToArgument());
-    try argv.append(operation);
-    try argv.append("test_archive.a");
-    try argv.appendSlice(file_names);
-
-    try doZarArchiveOperation(argv.items, test_dir_info);
-}
-
-fn doZarArchiveOperation(arguments: []const []const u8, test_dir_info: TestDirInfo) !void {
-    const tracy = trace(@src());
-    defer tracy.end();
-    const allocator = std.testing.allocator;
-
-    try invokeZar(allocator, arguments, test_dir_info, .{});
-}
-
-fn doLlvmArchiveOperationLegacy(format: LlvmFormat, comptime operation: []const u8, file_names: []const []const u8, test_dir_info: TestDirInfo) !void {
-    errdefer |err| {
-        logger.err("Failed to run llvm ar operation {s} with the provided format ({}): {}", .{ operation, format, err });
-    }
-    const allocator = std.testing.allocator;
-    var argv: std.ArrayListUnmanaged([]const u8) = .{};
-    defer argv.deinit(allocator);
-
-    try argv.append(allocator, format.llvmFormatToArgument());
-    try argv.append(allocator, operation);
-    try argv.append(allocator, "test_archive.a");
-    try argv.appendSlice(allocator, file_names);
-
-    try doLlvmArchiveOperation(argv.items, test_dir_info);
-}
-
 fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !void {
+    errdefer {
+        logger.err("Failure occured when comparing archivers with arguments: ({s})", .{arguments});
+    }
     const allocator = std.testing.allocator;
 
     const llvm_run_result = llvm_run_result: {
@@ -898,36 +817,6 @@ fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !
         .stdout = llvm_run_result.stdout,
     });
     try compareGeneratedArchives(test_dir_info);
-}
-
-fn doLlvmArchiveOperation(arguments: []const []const u8, test_dir_info: TestDirInfo) !void {
-    errdefer |err| {
-        logger.err("Failed to run llvm ar operation with the provided arguments:{s}, {}", .{ arguments, err });
-    }
-    const tracy = trace(@src());
-    defer tracy.end();
-    const allocator = std.testing.allocator;
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
-
-    try argv.append(build_options.zig_exe_path);
-    try argv.append("ar");
-    try argv.appendSlice(arguments);
-
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = argv.items,
-        .cwd_dir = test_dir_info.llvm_ar_wd,
-    });
-
-    if (result.stderr.len > 0) {
-        logger.err("llvm ar operation failed with: {s}", .{result.stderr});
-    }
-
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
 }
 
 fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
