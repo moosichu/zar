@@ -171,8 +171,8 @@ pub fn build(b: *std.Build) !void {
 
     if (build_test_executable_only) {
         const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&tests.step);
-        // tests.emit_bin = .{ .emit_to = "zig-out/bin/test" };
+        b.installArtifact(tests);
+        test_step.dependOn(b.getInstallStep());
     } else {
         const test_step = b.step("test", "Run tests");
         const run_tests = b.addRunArtifact(tests);
