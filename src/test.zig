@@ -13,9 +13,6 @@ const Archive = @import("archive/Archive.zig");
 const main = @import("main.zig");
 const build_options = @import("build_options");
 
-// TODO: pass this through from build system
-const path_to_zar = "../../../../zig-out/bin/zar";
-
 const no_files = [_][]const u8{};
 const no_symbols = [_][][]const u8{};
 const no_dir = "test/data/none";
@@ -758,7 +755,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
 
     var argv: std.ArrayListUnmanaged([]const u8) = .{};
     defer argv.deinit(allocator);
-    try argv.append(allocator, path_to_zar);
+    try argv.append(allocator, build_options.zar_exe_path);
     try argv.appendSlice(allocator, arguments);
 
     // argments[0] must be path_to_zar

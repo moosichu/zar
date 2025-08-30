@@ -159,6 +159,16 @@ pub fn build(b: *std.Build) !void {
     }
 
     b.installArtifact(exe);
+    // There must be a better way to feed through the exe install path through to the build system...
+    {
+        var exe_name = exe.name;
+        if (target.result.os.tag == .windows) {
+            exe_name = "zar.exe";
+        }
+        const exe_path = try std.fs.path.join(b.allocator, &[_][]const u8{ b.install_path, "bin", exe_name });
+        defer b.allocator.free(exe_path);
+        exe_options.addOption([]const u8, "zar_exe_path", exe_path);
+    }
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
