@@ -21,7 +21,6 @@ const Bitcode = struct {
     const magic = "BC\xC0\xDE";
 };
 const coff = std.coff;
-const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
 const Allocator = std.mem.Allocator;
 const allocator_limit = 10000000;
@@ -141,14 +140,9 @@ pub const CriticalError = error{
 };
 
 pub const IoError =
-       fs.File.GetSeekPosError || fs.File.DeprecatedReader.NoEofError
-    // || no known error sets for creating a file
-    || fs.File.OpenError
-    || fs.File.ReadError
-    || fs.File.SeekError
-    || fs.File.StatError
-    || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError
-    ;
+    fs.File.GetSeekPosError || fs.File.DeprecatedReader.NoEofError
+        // || no known error sets for creating a file
+    || fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || fs.File.StatError || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError;
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
@@ -268,6 +262,10 @@ const ErrorContext = enum {
     writing,
 };
 
+fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
+    return file_writer.pos + file_writer.interface.end;
+}
+
 pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: IoError) HandledIoError {
     const context_str = @tagName(context);
 
@@ -385,8 +383,6 @@ fn calculatePadding(self: *Archive, file_pos: usize) usize {
     return padding;
 }
 
-// const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(std.io.BufferedWriter(4096, std.fs.File.Writer));
-
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
@@ -406,8 +402,9 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     // TrackingBufferedWriter no longer appears to be necessary,
     // as fs.File.Writer has a "pos" field and a buffer now.
     var writer_buf: [4096]u8 = undefined;
-    var buffered_writer = self.file.writer(&writer_buf);// TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
-    const writer = &buffered_writer.interface;
+    var file_writer = self.file.writer(&writer_buf);
+    const writer = &file_writer.interface;
+    defer writer.flush() catch {};
 
     try handleFileIoError(.writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
 
@@ -690,7 +687,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
             if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
-                const padding = self.calculatePadding(buffered_writer.pos + header_buffer.len + file.name.len);
+                const padding = self.calculatePadding(calculateLogicPosition(file_writer) + header_buffer.len + file.name.len);
 
                 // BSD format: Just write the length of the name in header
                 _ = std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding}) catch |e| switch (e) {
@@ -722,19 +719,16 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try handleFileIoError(.writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(.writing, self.name, writer.splatByteAll(0, self.calculatePadding(buffered_writer.pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer))));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try handleFileIoError(.writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(.writing, self.name, writer.splatByteAll('\n', self.calculatePadding(buffered_writer.pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer))));
         }
     }
 
-    try handleFileIoError(.writing, self.name, buffered_writer.end());
-
-    // Truncate the file size (now done by call to end())
-    // try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.pos));
+    try handleFileIoError(.writing, self.name, file_writer.end());
 }
 
 pub fn deinit(self: *Archive) void {
@@ -998,7 +992,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             error.OutOfMemory => return error.OutOfMemory,
             else => @as(IoError, @errorCast(e)),
         };
-        const archived_file = ArchivedFile{ // was var
+        var archived_file = ArchivedFile{ // was var
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try handleFileIoError(.reading, file_name, bytes_or_io_error),
@@ -1010,11 +1004,11 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             },
         };
 
-        // const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
+        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            // try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0); // Hacking out the zld stuff so this is borked right now.
+            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0); // Hacking out the zld stuff so this is borked right now.
         }
 
         // A trie-based datastructure would be better for this!
@@ -1425,7 +1419,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             },
         };
 
-        // const offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+        const offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
 
         if (self.inferred_archive_type == .gnuthin) {
             var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
@@ -1437,14 +1431,14 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         }
 
         if (self.modifiers.build_symbol_table) {
-            // const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+            const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
             // TODO: Actually handle these errors!
             // … and get this working in the first place!
-            //self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
-            //    return error.TODO;
-            //};
+            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
+                return error.TODO;
+            };
 
-            // try handleFileIoError(.seeking, self.name, reader.context.seekTo(post_offset_hack));
+            try handleFileIoError(.seeking, self.name, reader.context.seekTo(post_offset_hack));
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);

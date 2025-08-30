@@ -205,7 +205,7 @@ pub fn parse(self: *Object, allocator: Allocator, cpu_arch: std.Target.Cpu.Arch)
     // the GO compiler does not necessarily respect that therefore we sort immediately by type
     // and address within.
     var sorted_all_syms = try std.ArrayList(SymbolAtIndex).initCapacity(allocator, self.in_symtab.?.len);
-    defer sorted_all_syms.deinit();
+    defer sorted_all_syms.deinit(allocator);
 
     for (self.in_symtab.?, 0..) |_, index| {
         sorted_all_syms.appendAssumeCapacity(.{ .index = @as(u32, @intCast(index)) });
