@@ -5,19 +5,18 @@ const WaitGroup = @import("WaitGroup.zig");
 
 mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
-run_queue: RunQueue = .{},
+run_queue: std.SinglyLinkedList = .{},
 is_running: bool = true,
 allocator: std.mem.Allocator,
 threads: []std.Thread,
 
-const RunQueue = std.SinglyLinkedList(Runnable);
 const Runnable = struct {
-    runFn: RunProto,
+    runFn: *const fn (*Runnable) void,
 };
 
-const RunProto = switch (builtin.zig_backend) {
-    .stage1 => fn (*Runnable) void,
-    else => *const fn (*Runnable) void,
+const RunQueue = struct {
+    node: std.SinglyLinkedList.Node,
+    data: Runnable,
 };
 
 pub fn init(pool: *ThreadPool, allocator: std.mem.Allocator) !void {
@@ -82,10 +81,10 @@ pub fn spawn(pool: *ThreadPool, comptime func: anytype, args: anytype) !void {
     const Closure = struct {
         arguments: Args,
         pool: *ThreadPool,
-        run_node: RunQueue.Node = .{ .data = .{ .runFn = runFn } },
+        run_node: RunQueue.RunQueue = .{ .data = .{ .runFn = runFn } },
 
         fn runFn(runnable: *Runnable) void {
-            const run_node: *RunQueue.Node = @fieldParentPtr("data", runnable);
+            const run_node: *RunQueue.RunQueue = @fieldParentPtr("data", runnable);
             const closure: @This() = @fieldParentPtr("run_node", run_node);
             @call(.auto, func, closure.arguments);
 

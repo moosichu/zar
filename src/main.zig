@@ -105,6 +105,13 @@ pub const ranlib_overview =
     \\
 ;
 
+var stdout_buf: [1024]u8 = undefined;
+var stderr_buf: [1024]u8 = undefined;
+var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+const stdout = &stdout_writer.interface;
+const stderr = &stderr_writer.interface;
+
 pub const zar_error_prefix = "\x1B[1;31merror\x1B[0m: ";
 pub const ranlib_error_prefix = "\x1B[1;31merror\x1B[0m: ";
 
@@ -130,17 +137,19 @@ pub const Mode = enum { ar, ranlib };
 
 pub var mode: Mode = .ar;
 
-fn printHelp(stdout: fs.File.Writer) void {
+fn printHelp() std.io.Writer.Error!void {
     _ = switch (mode) {
         .ar => stdout.print(zar_overview, .{}),
         .ranlib => stdout.print(ranlib_overview, .{}),
     } catch {};
+    try stdout.flush();
 }
 
-fn printVersion(stdout: fs.File.Writer) void {
+fn printVersion() std.io.Writer.Error!void {
     const target = builtin.target;
     const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
     stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
+    try stdout.flush();
 }
 
 // For the release standalone program,
@@ -159,7 +168,7 @@ pub fn log(
 
     std.debug.getStderrMutex().lock();
     defer std.debug.getStderrMutex().unlock();
-    const stderr = std.io.getStdErr().writer();
+    // const stderr = std.io.getStdErr().writer();
     if (full_logging) {
         nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
     } else {
@@ -178,9 +187,9 @@ fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
     if (full_logging) {
         logger.err(errorString, args);
     } else {
-        std.debug.getStderrMutex().lock();
-        defer std.debug.getStderrMutex().unlock();
-        const stderr = std.io.getStdErr().writer();
+        std.debug.lockStdErr();
+        defer std.debug.unlockStdErr();
+        // const stderr = std.io.getStdErr().writer();
         if (mode == .ranlib) {
             nosuspend stderr.print(full_ranlib_error_prefix ++ errorString ++ "\n", args) catch return;
         } else {
@@ -333,9 +342,6 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
 
-    const stdout = io.getStdOut().writer();
-    const stderr = io.getStdErr().writer();
-
     var archive_type = Archive.ArchiveType.ambiguous;
 
     // Check if we are in ranlib mode!
@@ -353,7 +359,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     var modifiers: Archive.Modifiers = .{};
     var operation: Archive.Operation = if (mode == .ranlib) .ranlib else .undefined;
     var found_archive_path: ?[]const u8 = null;
-    var files = std.ArrayList([]const u8).init(allocator);
+    var files = std.array_list.Managed([]const u8).init(allocator);
     defer files.deinit();
 
     const ParseState = enum { normal, relpos_before, relpos_after, count_gate, count };
@@ -391,10 +397,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                     } else if (arg.len == 0) {
                         continue;
                     } else if (mem.eql(u8, arg, help_string)) {
-                        printHelp(stdout);
+                        try printHelp();
                         return;
                     } else if (mem.eql(u8, arg, version_string)) {
-                        printVersion(stdout);
+                        try printVersion();
                         return;
                     }
                 }
@@ -495,12 +501,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.help) {
-        printHelp(stdout);
+        try printHelp();
         return;
     }
 
     if (modifiers.show_version) {
-        printVersion(stdout);
+        try printVersion();
         return;
     }
 
