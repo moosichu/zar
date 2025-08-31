@@ -43,7 +43,6 @@ files: std.ArrayListUnmanaged(ArchivedFile),
 symbols: std.ArrayListUnmanaged(Symbol),
 
 // Use it so we can easily lookup files indices when inserting!
-// TODO: A trie is probably a lot better here
 file_name_to_index: std.StringArrayHashMapUnmanaged(u64),
 
 modifiers: Modifiers,
@@ -212,7 +211,7 @@ pub const Contents = struct {
     uid: u32,
     gid: u32,
 
-    // TODO: deallocation
+    // TODO(#75): deallocation
 
     pub fn write(self: *const Contents, out_stream: *std.Io.Writer, stderr: anytype) !void {
         try out_stream.writeAll(self.bytes);
@@ -220,7 +219,7 @@ pub const Contents = struct {
     }
 };
 
-// An internal represention of files being archived
+// An internal representation of files being archived
 pub const ArchivedFile = struct {
     name: []const u8,
     contents: Contents,
@@ -238,10 +237,10 @@ pub const Symbol = struct {
 // cross-compilation etc. could possibly take it as a spec?)
 // Hardcoding this information here is a bit of a hacky
 // workaround in the short term - even though it is part of
-// the spec.
+// the spec. Maybe look into how llvm ar deals with this?
 const IntType = i32;
 
-// TODO: This name is confusing because ranlib is also the name of the ranlib
+// This name is confusing because ranlib is also the name of the ranlib
 // program - but also what this struct is traditionally called within archives.
 // :/
 // type of ranlib used depends on the archive storage format

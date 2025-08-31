@@ -105,19 +105,6 @@ pub const ranlib_overview =
     \\
 ;
 
-var stdout_buf: [1024]u8 = undefined;
-var stderr_buf: [1024]u8 = undefined;
-var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
-var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
-const stdout = &stdout_writer.interface;
-const stderr = &stderr_writer.interface;
-
-pub const zar_error_prefix = "\x1B[1;31merror\x1B[0m: ";
-pub const ranlib_error_prefix = "\x1B[1;31merror\x1B[0m: ";
-
-pub const full_zar_error_prefix = zar_overview ++ "\n" ++ zar_error_prefix;
-pub const full_ranlib_error_prefix = ranlib_overview ++ "\n" ++ ranlib_error_prefix;
-
 const version = if (@hasField(build_options, "version")) build_options.version else "0.0.0";
 
 const version_details =
@@ -129,95 +116,61 @@ const version_details =
     \\
 ;
 
-pub const full_logging = builtin.mode == .Debug;
 pub const debug_errors = builtin.mode == .Debug;
-pub const log_level: std.log.Level = if (full_logging) .debug else .warn;
+pub const log_level: std.log.Level = if (builtin.mode == .Debug) .debug else .warn;
 
 pub const Mode = enum { ar, ranlib };
 
 pub var mode: Mode = .ar;
 
-fn printHelp() std.io.Writer.Error!void {
+fn printError(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, comptime format: []const u8, args: anytype) void {
+    stderr.print("zar: ", .{}) catch {};
+    stderr_config.setColor(stderr, .red) catch {};
+    stderr_config.setColor(stderr, .bold) catch {};
+    stderr.print("error: ", .{}) catch {};
+    stderr_config.setColor(stderr, .reset) catch {};
+    stderr.print(format, args) catch {};
+    stderr.print("\n", .{}) catch {};
+    printHelp(stderr);
+}
+
+fn printHelp(stdout: *std.io.Writer) void {
     _ = switch (mode) {
         .ar => stdout.print(zar_overview, .{}),
         .ranlib => stdout.print(ranlib_overview, .{}),
     } catch {};
-    try stdout.flush();
+    stdout.flush() catch {};
 }
 
-fn printVersion() std.io.Writer.Error!void {
+fn printVersion(stdout: *std.io.Writer) void {
     const target = builtin.target;
     const default_archive_type = @tagName(Archive.getDefaultArchiveTypeFromHost());
     stdout.print(version_details, .{ @tagName(mode), version, @tagName(builtin.mode), default_archive_type, @tagName(target.cpu.arch), @tagName(target.os.tag), @tagName(target.abi) }) catch {};
-    try stdout.flush();
-}
-
-// For the release standalone program,
-// we just want to display concise errors to the end-user,
-// but during development we want them to show up as part of
-// the regular logging flow.
-pub fn log(
-    comptime level: std.log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
-    comptime format: []const u8,
-    args: anytype,
-) void {
-    const scope_prefix = "(" ++ @tagName(scope) ++ "): ";
-
-    const prefix = comptime level.asText() ++ scope_prefix;
-
-    std.debug.getStderrMutex().lock();
-    defer std.debug.getStderrMutex().unlock();
-    // const stderr = std.io.getStdErr().writer();
-    if (full_logging) {
-        nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
-    } else {
-        if (mode == .ranlib) {
-            nosuspend stderr.print(ranlib_error_prefix ++ format ++ "\n", args) catch return;
-        } else {
-            nosuspend stderr.print(zar_error_prefix ++ format ++ "\n", args) catch return;
-        }
-    }
-}
-
-// We want to show program zar_overview if invalid argument combination is passed
-// through to the program be the user, we do this often enough that it's worth
-// having a procedure for it.
-fn printArgumentError(comptime errorString: []const u8, args: anytype) void {
-    if (full_logging) {
-        logger.err(errorString, args);
-    } else {
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
-        // const stderr = std.io.getStdErr().writer();
-        if (mode == .ranlib) {
-            nosuspend stderr.print(full_ranlib_error_prefix ++ errorString ++ "\n", args) catch return;
-        } else {
-            nosuspend stderr.print(full_zar_error_prefix ++ errorString ++ "\n", args) catch return;
-        }
-    }
+    stdout.flush() catch {};
 }
 
 fn checkOptionalArgsBounds(
+    stderr: *std.io.Writer,
+    stderr_config: std.io.tty.Config,
     args: []const []const u8,
     index: usize,
     comptime missing_argument: []const u8,
     comptime for_modifier: []const u8,
 ) bool {
     if (index >= args.len or args[index].len < 1 or args[index][0] == '-') {
-        printArgumentError(missing_argument ++ " must be provided for " ++ for_modifier ++ " modifier.", .{});
+        printError(stderr, stderr_config, missing_argument ++ " must be provided for " ++ for_modifier ++ " modifier.", .{});
         return false;
     }
     return true;
 }
 
-fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool, created: *bool) !fs.File {
+fn openOrCreateFile(stdout: *std.io.Writer, cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool, created: *bool) !fs.File {
     created.* = false;
     const open_file_handle = cwd.openFile(archive_path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => {
             created.* = true;
             if (print_creation_warning) {
-                logger.warn("Creating new archive as none exists at path provided\n", .{});
+                stdout.print("Creating new archive as none exists at path provided\n", .{}) catch {};
             }
             const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, cwd.createFile(archive_path, .{ .read = true }));
             return create_file_handle;
@@ -229,7 +182,7 @@ fn openOrCreateFile(cwd: fs.Dir, archive_path: []const u8, print_creation_warnin
     return open_file_handle;
 }
 
-fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
+fn processModifier(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, modifier_char: u8, modifiers: *Archive.Modifiers) bool {
     // TODO(#63): make sure modifers are only allowed for their supported mode of
     // operation!
     switch (mode) {
@@ -256,7 +209,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
             'V' => modifiers.show_version = true,
             // TODO(#64): Ensure all modifiers we need to handle are handled!
             else => {
-                printArgumentError("'{c}' is not a valid modifier.", .{modifier_char});
+                printError(stderr, stderr_config, "'{c}' is not a valid modifier.", .{modifier_char});
                 return false;
             },
         },
@@ -275,7 +228,7 @@ fn processModifier(modifier_char: u8, modifiers: *Archive.Modifiers) bool {
                 modifiers.help = true;
             },
             else => {
-                printArgumentError("'{c}' is not a valid option.", .{modifier_char});
+                printError(stderr, stderr_config, "'{c}' is not a valid option.", .{modifier_char});
                 return false;
             },
         },
@@ -308,7 +261,7 @@ pub fn main() anyerror!void {
     };
 }
 
-pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
+pub fn linkAsArchive(stdout: *std.io.Writer, gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
     var modifiers: Archive.Modifiers = .{};
     modifiers.build_symbol_table = true;
     modifiers.create = true;
@@ -321,7 +274,7 @@ pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_name
     const cwd = fs.cwd();
 
     var created = false;
-    const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
+    const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
     defer file.close();
 
     var files = std.ArrayList([]const u8).init(allocator);
@@ -341,6 +294,16 @@ pub fn linkAsArchive(gpa: std.mem.Allocator, archive_path: []const u8, file_name
 pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
+    var stdout_buf: [1024]u8 = undefined;
+    var stderr_buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    const stdout = &stdout_writer.interface;
+    const stderr = &stderr_writer.interface;
+
+    const stdout_config = std.io.tty.detectConfig(std.fs.File.stdout());
+    const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
+    _ = stdout_config;
 
     var archive_type = Archive.ArchiveType.ambiguous;
     defer stdout.flush() catch {};
@@ -386,7 +349,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                         } else if (mem.eql(u8, format_string, "gnu")) {
                             archive_type = .gnu;
                         } else {
-                            logger.err("Invalid format {s}", .{format_string});
+                            printError(stderr, stderr_config, "Invalid format {s}", .{format_string});
                             return Archive.HandledError.UnknownFormat;
                         }
                         continue;
@@ -399,10 +362,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                     } else if (arg.len == 0) {
                         continue;
                     } else if (mem.eql(u8, arg, help_string)) {
-                        try printHelp();
+                        printHelp(stdout);
                         return;
                     } else if (mem.eql(u8, arg, version_string)) {
-                        try printVersion();
+                        printVersion(stdout);
                         return;
                     }
                 }
@@ -415,7 +378,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                             var arg_slice = arg[0..];
                             if (arg_slice[0] == '-') {
                                 if (arg_slice.len == 1) {
-                                    printArgumentError("A valid operation must be provided - only hyphen found.", .{});
+                                    printError(stderr, stderr_config, "A valid operation must be provided - only hyphen found.", .{});
                                     return;
                                 }
 
@@ -439,7 +402,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                             'x' => break :operation .extract,
                             'S' => break :operation .print_symbols,
                             else => {
-                                printArgumentError("'{c}' is not a valid operation.", .{operation_slice[0]});
+                                printError(stderr, stderr_config, "'{c}' is not a valid operation.", .{operation_slice[0]});
                                 return;
                             },
                         }
@@ -457,7 +420,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 }
 
                 for (modifier_slice) |modifier_char| {
-                    if (!processModifier(modifier_char, &modifiers)) {
+                    if (!processModifier(stderr, stderr_config, modifier_char, &modifiers)) {
                         return;
                     }
                 }
@@ -478,12 +441,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 continue :cur .count_gate;
             },
             .relpos_before => {
-                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
+                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "A [relpos]", "a, b or i")) return;
                 modifiers.move_setting.before = arg;
                 continue :cur .count_gate;
             },
             .relpos_after => {
-                if (!checkOptionalArgsBounds(args, arg_index, "A [relpos]", "a, b or i")) return;
+                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "A [relpos]", "a, b or i")) return;
                 modifiers.move_setting.after = arg;
                 continue :cur .count_gate;
             },
@@ -492,9 +455,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 parser_state = if (modifiers.instance_to_delete == 0) .count else .normal;
             },
             .count => {
-                if (!checkOptionalArgsBounds(args, arg_index, "An [count]", "N")) return;
+                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "An [count]", "N")) return;
                 modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, arg, 10) catch {
-                    logger.err("[count] must be a positive number, received '{s}'.", .{arg});
+                    printError(stderr, stderr_config, "[count] must be a positive number, received '{s}'.", .{arg});
                     return;
                 };
                 parser_state = .normal;
@@ -503,12 +466,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.help) {
-        try printHelp();
+        printHelp(stdout);
         return;
     }
 
     if (modifiers.show_version) {
-        try printVersion();
+        printVersion(stdout);
         return;
     }
 
@@ -533,7 +496,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (operation == .undefined) {
-        logger.err("An operation must be provided.", .{});
+        printError(stderr, stderr_config, "An operation must be provided.", .{});
         return;
     }
 
@@ -542,14 +505,14 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             break :archive_path archive_path;
         }
 
-        logger.err("An archive must be provided.", .{});
+        printError(stderr, stderr_config, "An archive must be provided.", .{});
         return;
     };
 
     switch (operation) {
         .insert => {
             var created = false;
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
             var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
@@ -560,7 +523,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .delete => {
             var created = false;
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
             var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
@@ -612,7 +575,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .move => {
             var created = false;
-            const file = try openOrCreateFile(cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
             defer file.close();
 
             var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
@@ -622,7 +585,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             try archive.flush();
         },
         .quick_append => {
-            logger.err("quick append still needs to be implemented!\n", .{});
+            printError(stderr, stderr_config, "quick append still needs to be implemented!\n", .{});
             return error.TODO; // #71
         },
         .ranlib => {
@@ -634,7 +597,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             try archive.flush();
         },
         .extract => {
-            logger.err("extract still needs to be implemented!\n", .{});
+            printError(stderr, stderr_config, "extract still needs to be implemented!\n", .{});
             if (modifiers.preserve_original_dates) {
                 return error.TODO; // #74
             }
@@ -648,6 +611,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
 }
 
 fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !void {
+    var stderr_buf: [1024]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+    const stderr = &stderr_writer.interface;
+    const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
+    defer stderr.flush() catch {};
+
     {
         // we can ignore these errors because we log context specific
         // information about them at the time that they are thrown.
@@ -663,10 +632,10 @@ fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !vo
 
     switch (unhandled_err) {
         // These are errors which already have appropraite log messages printed
-        Archive.ParseError.NotArchive => logger.err("Provided file is not an archive.", .{}),
-        Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => logger.err("Malformed archive provided.", .{}),
-        error.OutOfMemory => logger.err("Program ran out of memory.", .{}),
-        error.TODO => logger.err("Unimplemented feature encountered (TODO error)", .{}),
+        Archive.ParseError.NotArchive => printError(stderr, stderr_config, "Provided file is not an archive.", .{}),
+        Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => printError(stderr, stderr_config, "Malformed archive provided.", .{}),
+        error.OutOfMemory => printError(stderr, stderr_config, "Program ran out of memory.", .{}),
+        error.TODO => printError(stderr, stderr_config, "Unimplemented feature encountered (TODO error)", .{}),
     }
 
     if (debug_errors) return err;
