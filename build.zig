@@ -159,6 +159,16 @@ pub fn build(b: *std.Build) !void {
     }
 
     b.installArtifact(exe);
+    // There must be a better way to feed through the exe install path through to the build system...
+    {
+        var exe_name = exe.name;
+        if (target.result.os.tag == .windows) {
+            exe_name = "zar.exe";
+        }
+        const exe_path = try std.fs.path.join(b.allocator, &[_][]const u8{ b.install_path, "bin", exe_name });
+        defer b.allocator.free(exe_path);
+        exe_options.addOption([]const u8, "zar_exe_path", exe_path);
+    }
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
@@ -171,11 +181,12 @@ pub fn build(b: *std.Build) !void {
 
     if (build_test_executable_only) {
         const test_step = b.step("test", "Run tests");
-        test_step.dependOn(&tests.step);
-        // tests.emit_bin = .{ .emit_to = "zig-out/bin/test" };
+        b.installArtifact(tests);
+        test_step.dependOn(b.getInstallStep());
     } else {
         const test_step = b.step("test", "Run tests");
         const run_tests = b.addRunArtifact(tests);
+        test_step.dependOn(b.getInstallStep());
         test_step.dependOn(&run_tests.step);
     }
 }

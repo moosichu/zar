@@ -18,7 +18,7 @@
             "request": "launch",
             "name": "Debug Tests",
             "program": "zig-out/bin/test",
-            "args": ["zig"],
+            "args": [],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "Build Tests"
         }
