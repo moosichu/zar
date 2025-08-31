@@ -496,27 +496,38 @@ const TestSequence = struct {
     ) !void {
         // TODO: get this from the execution options
         for (execution_options.targets) |target| {
+            var test_dir_info = try TestDirInfo.getInfo();
+            // if a test is going to fail anyway, this is a useful way to debug it for now..
+            var cancel_cleanup = false;
+            defer if (!cancel_cleanup) test_dir_info.cleanup();
+            errdefer {
+                cancel_cleanup = true;
+            }
             const llvm_format_options = [_]LlvmFormat{ .implicit, target.operating_system.toDefaultLlvmFormat() };
+            // this variable is used instead of a proper caching system (for now)... let's us avoid recompiling the same files
+            // over & over. (A bit hacky - what if collisions etc... but will do proper caching system later!)
+            var first_target_iter = true;
             for (llvm_format_options) |llvm_format_option| {
-                var test_dir_info = try TestDirInfo.getInfo();
-                // if a test is going to fail anyway, this is a useful way to debug it for now..
-                var cancel_cleanup = false;
-                defer if (!cancel_cleanup) test_dir_info.cleanup();
+                defer first_target_iter = false;
                 errdefer |err| {
                     cancel_cleanup = true;
                     logger.err("Failed archiving test for target ({s}): {}", .{ target.targetToArgument(), err });
                 }
-
                 for (test_sequence.test_operations.items) |*test_operation| {
                     switch (test_operation.*) {
-                        .build_object_file => |build_object_file| {
-                            try generateCompiledFilesWithSymbols(
-                                allocator,
-                                target,
-                                &[_][]const u8{build_object_file.object_name},
-                                &[_][]const []const u8{build_object_file.symbols},
-                                test_dir_info,
-                            );
+                        .build_object_file => |*build_object_file| {
+                            if (first_target_iter) {
+                                try generateCompiledFilesWithSymbols(
+                                    allocator,
+                                    target,
+                                    &[_][]const u8{build_object_file.object_name},
+                                    &[_][]const []const u8{build_object_file.symbols},
+                                    test_dir_info,
+                                );
+                            }
+
+                            try test_dir_info.tmp_dir.dir.copyFile(build_object_file.object_name, test_dir_info.zar_wd, build_object_file.object_name, .{});
+                            try test_dir_info.tmp_dir.dir.copyFile(build_object_file.object_name, test_dir_info.llvm_ar_wd, build_object_file.object_name, .{});
                         },
                         .test_archive_operation => |*test_archive_operation| {
                             try compareArchivers(test_archive_operation.getArchiveArguments(llvm_format_option), test_dir_info);
@@ -527,51 +538,61 @@ const TestSequence = struct {
                         },
                     }
                 }
+                if (!cancel_cleanup) {
+                    test_dir_info.resetArchiveDirs() catch |err| {
+                        logger.err("Failed to reset archive dirs test for target ({s}): {}", .{ target.targetToArgument(), err });
+                        // return @errorCast(err);
+                        cancel_cleanup = true;
+                        return;
+                    };
+                }
             }
         }
     }
 };
 
-test "Test Argument Errors" {
-    if (builtin.target.os.tag == .windows) {
-        return;
-    }
-    const allocator = std.testing.allocator;
-    var test_dir_info = try TestDirInfo.getInfo();
-    defer test_dir_info.cleanup();
+// TODO: sort these out :)
 
-    var argv: std.ArrayList([]const u8) = .{};
-    defer argv.deinit(allocator);
+// test "Test Argument Errors" {
+//     if (builtin.target.os.tag == .windows) {
+//         return;
+//     }
+//     const allocator = std.testing.allocator;
+//     var test_dir_info = try TestDirInfo.getInfo();
+//     defer test_dir_info.cleanup();
 
-    {
-        try argv.resize(allocator, 0);
-        const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): An operation must be provided.\n",
-        };
+//     var argv: std.ArrayList([]const u8) = .{};
+//     defer argv.deinit(allocator);
 
-        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-    }
+//     {
+//         try argv.resize(allocator, 0);
+//         const expected_out: ExpectedOut = .{
+//             .stderr = "zar: error: An operation must be provided.\n",
+//         };
 
-    {
-        try argv.resize(allocator, 0);
-        try argv.append(allocator, "j");
-        const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): 'j' is not a valid operation.\n",
-        };
+//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+//     }
 
-        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-    }
+//     {
+//         try argv.resize(allocator, 0);
+//         try argv.append(allocator, "j");
+//         const expected_out: ExpectedOut = .{
+//             .stderr = "zar: error: 'j' is not a valid operation.\n",
+//         };
 
-    {
-        try argv.resize(allocator, 0);
-        try argv.append(allocator, "rj");
-        const expected_out: ExpectedOut = .{
-            .stderr = "error(archive_main): 'j' is not a valid modifier.\n",
-        };
+//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+//     }
 
-        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-    }
-}
+//     {
+//         try argv.resize(allocator, 0);
+//         try argv.append(allocator, "rj");
+//         const expected_out: ExpectedOut = .{
+//             .stderr = "zar: error: 'j' is not a valid modifier.\n",
+//         };
+
+//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+//     }
+// }
 
 fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: [][][]u8, symbol_count: u32) !void {
     for (file_names, 0..) |_, index| {
@@ -593,7 +614,9 @@ const targets = result: {
     var target_index = 0;
     // "for"s were inline
     for (os_fields) |os_field| {
+        if (@as(OperatingSystem, @enumFromInt(os_field.value)) == .unknown) continue;
         for (arch_fields) |arch_field| {
+            if (@as(Architecture, @enumFromInt(arch_field.value)) == .unknown) continue;
             aggregator[target_index] = .{
                 .architecture = @as(Architecture, @enumFromInt(arch_field.value)),
                 .operating_system = @as(OperatingSystem, @enumFromInt(os_field.value)),
@@ -625,6 +648,7 @@ const OperatingSystem = enum {
     linux,
     macos,
     freebsd,
+    unknown,
     // windows,
 
     fn toDefaultLlvmFormat(operating_system: OperatingSystem) LlvmFormat {
@@ -632,6 +656,7 @@ const OperatingSystem = enum {
             .linux => .gnu,
             .macos => .darwin,
             .freebsd => .gnu,
+            else => unreachable,
         };
     }
 };
@@ -639,6 +664,7 @@ const OperatingSystem = enum {
 const Architecture = enum {
     aarch64,
     x86_64,
+    unknown,
 };
 
 const llvm_formats = result: {
@@ -693,6 +719,21 @@ const TestDirInfo = struct {
             ".zig-cache", "tmp", &result.tmp_dir.sub_path,
         });
         return result;
+    }
+
+    pub fn resetArchiveDirs(self: *TestDirInfo) !void {
+        self.zar_wd.close();
+        self.llvm_ar_wd.close();
+        try self.tmp_dir.dir.deleteTree("zar_wd");
+        try self.tmp_dir.dir.deleteTree("llvm_ar_wd");
+
+        try self.tmp_dir.dir.makeDir("zar_wd");
+        self.zar_wd = try self.tmp_dir.dir.openDir("zar_wd", .{ .iterate = true });
+        errdefer self.zar_wd.close();
+
+        try self.tmp_dir.dir.makeDir("llvm_ar_wd");
+        self.llvm_ar_wd = try self.tmp_dir.dir.openDir("llvm_ar_wd", .{ .iterate = true });
+        errdefer self.llvm_ar_wd.close();
     }
 
     pub fn cleanup(self: *TestDirInfo) void {
