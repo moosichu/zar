@@ -879,16 +879,16 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
         const source_file_name = try std.fmt.allocPrint(framework_allocator, "{s}.c", .{file_name});
         defer framework_allocator.free(source_file_name);
         {
-            const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{ .lock = .exclusive });
+            const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{});
             defer source_file.close();
 
             var writer_buf: [4096]u8 = undefined;
             var file_writer = source_file.writer(&writer_buf);
-            var writer = file_writer.interface;
+            var writer = &file_writer.interface;
             for (file_symbols) |symbol| {
                 try writer.print("extern int {s}(int a) {{ return a; }}\n", .{symbol});
             }
-            try file_writer.end();
+            try writer.flush();
         }
 
         argv.items[file_name_arg] = file_name;
