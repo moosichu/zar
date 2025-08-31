@@ -435,7 +435,7 @@ const TestSequence = struct {
         copy_test_file: CopyTestFile,
     };
 
-    test_operations: std.ArrayListUnmanaged(TestOperation) = .{},
+    test_operations: std.ArrayList(TestOperation) = .{},
 
     pub fn copyTestFile(
         test_sequence: *TestSequence,
@@ -540,11 +540,11 @@ test "Test Argument Errors" {
     var test_dir_info = try TestDirInfo.getInfo();
     defer test_dir_info.cleanup();
 
-    var argv = std.ArrayList([]const u8).init(allocator);
-    defer argv.deinit();
+    var argv: std.ArrayList([]const u8) = .{};
+    defer argv.deinit(allocator);
 
     {
-        try argv.resize(0);
+        try argv.resize(allocator, 0);
         const expected_out: ExpectedOut = .{
             .stderr = "error(archive_main): An operation must be provided.\n",
         };
@@ -553,8 +553,8 @@ test "Test Argument Errors" {
     }
 
     {
-        try argv.resize(0);
-        try argv.append("j");
+        try argv.resize(allocator, 0);
+        try argv.append(allocator, "j");
         const expected_out: ExpectedOut = .{
             .stderr = "error(archive_main): 'j' is not a valid operation.\n",
         };
@@ -563,8 +563,8 @@ test "Test Argument Errors" {
     }
 
     {
-        try argv.resize(0);
-        try argv.append("rj");
+        try argv.resize(allocator, 0);
+        try argv.append(allocator, "rj");
         const expected_out: ExpectedOut = .{
             .stderr = "error(archive_main): 'j' is not a valid modifier.\n",
         };
@@ -753,7 +753,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
         logger.err("test failure: {}", .{err});
     }
 
-    var argv: std.ArrayListUnmanaged([]const u8) = .{};
+    var argv: std.ArrayList([]const u8) = .{};
     defer argv.deinit(allocator);
     try argv.append(allocator, build_options.zar_exe_path);
     try argv.appendSlice(allocator, arguments);
@@ -766,7 +766,13 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
     if (invoke_as_child_process) {
         errdefer |err| {
-            logger.err("{}: {s} {}", .{ err, argv.items, test_dir_info.zar_wd });
+            // Blocked by a compiler regression... ideally it should be easier to print these args.
+            // See: https://zsf.zulipchat.com/#narrow/channel/454371-std/topic/array.20formatting/near/536968619
+            // logger.err("{}: {s} {}", .{ err, argv.items, test_dir_info.zar_wd });
+            logger.err("{}: {} - args", .{ err, test_dir_info.zar_wd });
+            for (argv.items) |arg| {
+                logger.err("{s}", .{arg});
+            }
         }
         const result = try std.process.Child.run(.{
             .allocator = allocator,
@@ -803,14 +809,18 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
 
 fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !void {
     errdefer {
-        logger.err("Failure occured when comparing archivers with arguments: ({s})", .{arguments});
+        // logger.err("Failure occured when comparing archivers with arguments: ({s})", .{arguments});
+        logger.err("Failure occured when comparing archivers with arguments:", .{});
+        for (arguments) |argument| {
+            logger.err("{s}", .{argument});
+        }
     }
     const allocator = std.testing.allocator;
 
     const llvm_run_result = llvm_run_result: {
         const tracy = traceNamed(@src(), "llvm ar");
         defer tracy.end();
-        var argv: std.ArrayListUnmanaged([]const u8) = .{};
+        var argv: std.ArrayList([]const u8) = .{};
         defer argv.deinit(allocator);
 
         try argv.append(allocator, build_options.zig_exe_path);
@@ -844,19 +854,20 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
     const child_processes = try framework_allocator.alloc(std.process.Child, worker_count);
     defer framework_allocator.free(child_processes);
 
-    var argv = std.ArrayList([]const u8).init(framework_allocator);
-    defer argv.deinit();
-    try argv.append(build_options.zig_exe_path);
-    try argv.append("cc");
-    try argv.append("-c");
-    try argv.append("-o");
+    var argv: std.ArrayList([]const u8) = .{};
+    defer argv.deinit(framework_allocator);
+    try argv.ensureUnusedCapacity(framework_allocator, 7);
+    argv.appendAssumeCapacity(build_options.zig_exe_path);
+    argv.appendAssumeCapacity("cc");
+    argv.appendAssumeCapacity("-c");
+    argv.appendAssumeCapacity("-o");
     const file_name_arg = argv.items.len;
-    try argv.append("");
+    argv.appendAssumeCapacity("");
     const source_name_arg = argv.items.len;
-    try argv.append("");
-    try argv.append("-target");
+    argv.appendAssumeCapacity("");
+    argv.appendAssumeCapacity("-target");
     // TODO: Test other target triples with appropriate corresponding archive format!
-    try argv.append(target.targetToArgument());
+    argv.appendAssumeCapacity(target.targetToArgument());
 
     for (file_names, symbol_names, 0..) |file_name, file_symbols, index| {
         const process_index = @mod(index, child_processes.len);
@@ -868,13 +879,16 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
         const source_file_name = try std.fmt.allocPrint(framework_allocator, "{s}.c", .{file_name});
         defer framework_allocator.free(source_file_name);
         {
-            const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{});
+            const source_file = try test_dir_info.tmp_dir.dir.createFile(source_file_name, .{ .lock = .exclusive });
             defer source_file.close();
 
-            const writer = source_file.writer();
+            var writer_buf: [4096]u8 = undefined;
+            var file_writer = source_file.writer(&writer_buf);
+            var writer = file_writer.interface;
             for (file_symbols) |symbol| {
                 try writer.print("extern int {s}(int a) {{ return a; }}\n", .{symbol});
             }
+            try file_writer.end();
         }
 
         argv.items[file_name_arg] = file_name;

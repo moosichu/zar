@@ -21,7 +21,6 @@ const Bitcode = struct {
     const magic = "BC\xC0\xDE";
 };
 const coff = std.coff;
-const tracking_buffered_writer = @import("../tracking_buffered_writer.zig");
 
 const Allocator = std.mem.Allocator;
 const allocator_limit = 10000000;
@@ -141,14 +140,9 @@ pub const CriticalError = error{
 };
 
 pub const IoError =
-       fs.File.GetSeekPosError || fs.File.Reader.NoEofError
-    // || no known error sets for creating a file
-    || fs.File.OpenError
-    || fs.File.ReadError
-    || fs.File.SeekError
-    || fs.File.StatError
-    || fs.File.WriteError
-    ;
+    fs.File.GetSeekPosError || fs.File.DeprecatedReader.NoEofError
+        // || no known error sets for creating a file
+    || fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || fs.File.StatError || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError;
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
@@ -220,13 +214,13 @@ pub const Contents = struct {
 
     // TODO: deallocation
 
-    pub fn write(self: *const Contents, out_stream: anytype, stderr: anytype) !void {
+    pub fn write(self: *const Contents, out_stream: *std.Io.Writer, stderr: anytype) !void {
         try out_stream.writeAll(self.bytes);
         _ = stderr;
     }
 };
 
-// An internal represantion of files being archived
+// An internal represention of files being archived
 pub const ArchivedFile = struct {
     name: []const u8,
     contents: Contents,
@@ -267,6 +261,10 @@ const ErrorContext = enum {
     stat,
     writing,
 };
+
+fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
+    return file_writer.pos + file_writer.interface.end;
+}
 
 pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: IoError) HandledIoError {
     const context_str = @tagName(context);
@@ -385,8 +383,6 @@ fn calculatePadding(self: *Archive, file_pos: usize) usize {
     return padding;
 }
 
-const TrackingBufferedWriter = tracking_buffered_writer.TrackingBufferedWriter(std.io.BufferedWriter(4096, std.fs.File.Writer));
-
 // TODO: This needs to be integrated into the workflow
 // used for parsing. (use same error handling workflow etc.)
 /// Use same naming scheme for objects (as found elsewhere in the file).
@@ -403,9 +399,12 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     // Overwrite all contents
     try handleFileIoError(.seeking, self.name, self.file.seekTo(0));
 
-    // We wrap the buffered writer so that can we can track file position more easily
-    var buffered_writer = TrackingBufferedWriter{ .buffered_writer = std.io.bufferedWriter(self.file.writer()) };
-    const writer = buffered_writer.writer();
+    // TrackingBufferedWriter no longer appears to be necessary,
+    // as fs.File.Writer has a "pos" field and a buffer now.
+    var writer_buf: [4096]u8 = undefined;
+    var file_writer = self.file.writer(&writer_buf);
+    const writer = &file_writer.interface;
+    defer writer.flush() catch {};
 
     try handleFileIoError(.writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
 
@@ -477,7 +476,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     switch (self.output_archive_type) {
         .gnu, .gnuthin, .gnu64 => {
             // GNU format: Create string table
-            var string_table = std.ArrayList(u8).init(allocator);
+            var string_table = std.array_list.Managed(u8).init(allocator);
             defer string_table.deinit();
 
             // Generate the complete string table
@@ -688,7 +687,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
             if (!self.output_archive_type.isBsdLike()) {
                 break :file_length_calculation file.contents.length;
             } else {
-                const padding = self.calculatePadding(buffered_writer.file_pos + header_buffer.len + file.name.len);
+                const padding = self.calculatePadding(calculateLogicPosition(file_writer) + header_buffer.len + file.name.len);
 
                 // BSD format: Just write the length of the name in header
                 _ = std.fmt.bufPrint(&(header_names[index]), "#1/{: <13}", .{file.name.len + padding}) catch |e| switch (e) {
@@ -720,19 +719,16 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
             try handleFileIoError(.writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes(0, self.calculatePadding(buffered_writer.file_pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer))));
         }
 
         if (self.output_archive_type != .gnuthin) {
             try handleFileIoError(.writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(.writing, self.name, writer.writeByteNTimes('\n', self.calculatePadding(buffered_writer.file_pos)));
+            try handleFileIoError(.writing, self.name, writer.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer))));
         }
     }
 
-    try handleFileIoError(.writing, self.name, buffered_writer.flush());
-
-    // Truncate the file size
-    try handleFileIoError(.writing, self.name, self.file.setEndPos(buffered_writer.file_pos));
+    try handleFileIoError(.writing, self.name, file_writer.end());
 }
 
 pub fn deinit(self: *Archive) void {
@@ -815,7 +811,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
 
     var magic: [4]u8 = undefined;
-    _ = try handleFileIoError(.reading, archived_file.name, file.reader().read(&magic));
+    _ = try handleFileIoError(.reading, archived_file.name, file.deprecatedReader().read(&magic));
 
     try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
 
@@ -992,11 +988,11 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
         const timestamp = @as(u128, @intCast(@divFloor(mtime, std.time.ns_per_s)));
 
         // Extract critical error from error set - so IO errors can be handled seperately
-        const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, @alignOf(u64), null) catch |e| switch (e) {
+        const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, std.mem.Alignment.of(u64), null) catch |e| switch (e) {
             error.OutOfMemory => return error.OutOfMemory,
             else => @as(IoError, @errorCast(e)),
         };
-        var archived_file = ArchivedFile{
+        var archived_file = ArchivedFile{ // was var
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try handleFileIoError(.reading, file_name, bytes_or_io_error),
@@ -1012,7 +1008,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0);
+            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0); // Hacking out the zld stuff so this is borked right now.
         }
 
         // A trie-based datastructure would be better for this!
@@ -1031,7 +1027,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
     const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
-    const reader = self.file.reader();
+    const reader = self.file.deprecatedReader();
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
@@ -1414,7 +1410,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         const parsed_file = ArchivedFile{
             .name = trimmed_archive_name,
             .contents = Contents{
-                .bytes = try allocator.alignedAlloc(u8, @alignOf(u64), seek_forward_amount),
+                .bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.of(u64), seek_forward_amount),
                 .length = seek_forward_amount,
                 .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_mode, " "), 10),
                 .timestamp = timestamp,
@@ -1429,7 +1425,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
-            try handleFileIoError(.reading, trimmed_archive_name, thin_file.reader().readNoEof(parsed_file.contents.bytes));
+            try handleFileIoError(.reading, trimmed_archive_name, thin_file.deprecatedReader().readNoEof(parsed_file.contents.bytes));
         } else {
             try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
         }
@@ -1437,6 +1433,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         if (self.modifiers.build_symbol_table) {
             const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
             // TODO: Actually handle these errors!
+            // … and get this working in the first place!
             self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
                 return error.TODO;
             };
