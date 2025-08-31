@@ -343,6 +343,8 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     // defer tracy_zone.end();
 
     var archive_type = Archive.ArchiveType.ambiguous;
+    defer stdout.flush() catch {};
+    defer stderr.flush() catch {};
 
     // Check if we are in ranlib mode!
     mode, const offset: usize = determine: {
