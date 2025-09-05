@@ -5,10 +5,10 @@ const trace = @import("tracy.zig").trace;
 const fs = std.fs;
 const io = std.io;
 const mem = std.mem;
-const logger = std.log.scoped(.archive_main);
 const process = std.process;
 
 pub const Archive = @import("archive/Archive.zig");
+pub const ZarIo = @import("archive/ZarIo.zig");
 
 pub const zar_overview =
     \\Zig Archiver
@@ -123,15 +123,9 @@ pub const Mode = enum { ar, ranlib };
 
 pub var mode: Mode = .ar;
 
-fn printError(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, comptime format: []const u8, args: anytype) void {
-    stderr.print("zar: ", .{}) catch {};
-    stderr_config.setColor(stderr, .red) catch {};
-    stderr_config.setColor(stderr, .bold) catch {};
-    stderr.print("error: ", .{}) catch {};
-    stderr_config.setColor(stderr, .reset) catch {};
-    stderr.print(format, args) catch {};
-    stderr.print("\n", .{}) catch {};
-    printHelp(stderr);
+fn printArgumentError(zar_io: *const ZarIo, comptime format: []const u8, args: anytype) void {
+    zar_io.printError(format, args);
+    printHelp(zar_io.stderr);
 }
 
 fn printHelp(stdout: *std.io.Writer) void {
@@ -150,39 +144,38 @@ fn printVersion(stdout: *std.io.Writer) void {
 }
 
 fn checkOptionalArgsBounds(
-    stderr: *std.io.Writer,
-    stderr_config: std.io.tty.Config,
+    zar_io: *const ZarIo,
     args: []const []const u8,
     index: usize,
     comptime missing_argument: []const u8,
     comptime for_modifier: []const u8,
 ) bool {
     if (index >= args.len or args[index].len < 1 or args[index][0] == '-') {
-        printError(stderr, stderr_config, missing_argument ++ " must be provided for " ++ for_modifier ++ " modifier.", .{});
+        printArgumentError(zar_io, missing_argument ++ " must be provided for " ++ for_modifier ++ " modifier.", .{});
         return false;
     }
     return true;
 }
 
-fn openOrCreateFile(stdout: *std.io.Writer, cwd: fs.Dir, archive_path: []const u8, print_creation_warning: bool, created: *bool) !fs.File {
+fn openOrCreateFile(zar_io: *const ZarIo, archive_path: []const u8, print_creation_warning: bool, created: *bool) !fs.File {
     created.* = false;
-    const open_file_handle = cwd.openFile(archive_path, .{ .mode = .read_write }) catch |err| switch (err) {
+    const open_file_handle = zar_io.cwd.openFile(archive_path, .{ .mode = .read_write }) catch |err| switch (err) {
         error.FileNotFound => {
             created.* = true;
             if (print_creation_warning) {
-                stdout.print("Creating new archive as none exists at path provided\n", .{}) catch {};
+                zar_io.stdout.print("Creating new archive as none exists at path provided\n", .{}) catch {};
             }
-            const create_file_handle = try Archive.handleFileIoError(.creating, archive_path, cwd.createFile(archive_path, .{ .read = true }));
+            const create_file_handle = try Archive.handleFileIoError(zar_io, .creating, archive_path, zar_io.cwd.createFile(archive_path, .{ .read = true }));
             return create_file_handle;
         },
         else => {
-            return Archive.printFileIoError(.opening, archive_path, err);
+            return Archive.printFileIoError(zar_io, .opening, archive_path, err);
         },
     };
     return open_file_handle;
 }
 
-fn processModifier(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, modifier_char: u8, modifiers: *Archive.Modifiers) bool {
+fn processModifier(zar_io: *const ZarIo, modifier_char: u8, modifiers: *Archive.Modifiers) bool {
     // TODO(#63): make sure modifers are only allowed for their supported mode of
     // operation!
     switch (mode) {
@@ -209,7 +202,7 @@ fn processModifier(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, mod
             'V' => modifiers.show_version = true,
             // TODO(#64): Ensure all modifiers we need to handle are handled!
             else => {
-                printError(stderr, stderr_config, "'{c}' is not a valid modifier.", .{modifier_char});
+                printArgumentError(zar_io, "'{c}' is not a valid modifier.", .{modifier_char});
                 return false;
             },
         },
@@ -228,7 +221,7 @@ fn processModifier(stderr: *std.io.Writer, stderr_config: std.io.tty.Config, mod
                 modifiers.help = true;
             },
             else => {
-                printError(stderr, stderr_config, "'{c}' is not a valid option.", .{modifier_char});
+                printArgumentError(zar_io, "'{c}' is not a valid option.", .{modifier_char});
                 return false;
             },
         },
@@ -240,6 +233,28 @@ pub fn main() anyerror!void {
     const tracy = trace(@src());
     defer tracy.end();
 
+    var stdout_buf: [4096]u8 = undefined;
+    var stderr_buf: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
+
+    defer stdout_writer.interface.flush() catch {};
+    defer stderr_writer.interface.flush() catch {};
+    const zar_io: ZarIo = zar_io: {
+        const stdout = &stdout_writer.interface;
+        const stderr = &stderr_writer.interface;
+
+        const stdout_config = std.io.tty.detectConfig(std.fs.File.stdout());
+        const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
+        break :zar_io .{
+            .cwd = fs.cwd(),
+            .stdout = stdout,
+            .stdout_config = stdout_config,
+            .stderr = stderr,
+            .stderr_config = stderr_config,
+        };
+    };
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
@@ -247,21 +262,20 @@ pub fn main() anyerror!void {
     const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
         return err;
     } else {
-        logger.err("Unknown error occured.", .{});
+        zar_io.printError("Unknown error occured.", .{});
         return;
     };
 
-    const cwd = fs.cwd();
-    archiveMain(cwd, allocator, args) catch |err| {
-        handleArchiveError(err) catch |e| if (debug_errors) {
+    archiveMain(&zar_io, allocator, args) catch |err| {
+        handleArchiveError(&zar_io, err) catch |e| if (debug_errors) {
             return e;
         } else {
-            logger.err("Unknown error occured.", .{});
+            zar_io.printError("Unknown error occured.", .{});
         };
     };
 }
 
-pub fn linkAsArchive(stdout: *std.io.Writer, gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
+pub fn linkAsArchive(zar_io: *const ZarIo, gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
     var modifiers: Archive.Modifiers = .{};
     modifiers.build_symbol_table = true;
     modifiers.create = true;
@@ -271,10 +285,8 @@ pub fn linkAsArchive(stdout: *std.io.Writer, gpa: std.mem.Allocator, archive_pat
 
     const allocator = arena.allocator();
 
-    const cwd = fs.cwd();
-
     var created = false;
-    const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
+    const file = try openOrCreateFile(zar_io, archive_path, !modifiers.create, &created);
     defer file.close();
 
     var files = std.ArrayList([]const u8).init(allocator);
@@ -284,30 +296,17 @@ pub fn linkAsArchive(stdout: *std.io.Writer, gpa: std.mem.Allocator, archive_pat
         try files.append(file_name);
     }
 
-    var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+    var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, created);
     defer archive.deinit();
     try archive.parse();
     try archive.insertFiles(files.items);
     try archive.flush();
 }
 
-pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
+pub fn archiveMain(zar_io: *const ZarIo, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
     // const tracy_zone = ztracy.zoneNC(@src(), "ArchiveMain", 0x00_ff_00_00, 1);
     // defer tracy_zone.end();
-    var stdout_buf: [1024]u8 = undefined;
-    var stderr_buf: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buf);
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
-    const stdout = &stdout_writer.interface;
-    const stderr = &stderr_writer.interface;
-
-    const stdout_config = std.io.tty.detectConfig(std.fs.File.stdout());
-    const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
-    _ = stdout_config;
-
     var archive_type = Archive.ArchiveType.ambiguous;
-    defer stdout.flush() catch {};
-    defer stderr.flush() catch {};
 
     // Check if we are in ranlib mode!
     mode, const offset: usize = determine: {
@@ -349,7 +348,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                         } else if (mem.eql(u8, format_string, "gnu")) {
                             archive_type = .gnu;
                         } else {
-                            printError(stderr, stderr_config, "Invalid format {s}", .{format_string});
+                            printArgumentError(zar_io, "Invalid format {s}", .{format_string});
                             return Archive.HandledError.UnknownFormat;
                         }
                         continue;
@@ -362,10 +361,10 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                     } else if (arg.len == 0) {
                         continue;
                     } else if (mem.eql(u8, arg, help_string)) {
-                        printHelp(stdout);
+                        printHelp(zar_io.stdout);
                         return;
                     } else if (mem.eql(u8, arg, version_string)) {
-                        printVersion(stdout);
+                        printVersion(zar_io.stdout);
                         return;
                     }
                 }
@@ -378,7 +377,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                             var arg_slice = arg[0..];
                             if (arg_slice[0] == '-') {
                                 if (arg_slice.len == 1) {
-                                    printError(stderr, stderr_config, "A valid operation must be provided - only hyphen found.", .{});
+                                    printArgumentError(zar_io, "A valid operation must be provided - only hyphen found.", .{});
                                     return;
                                 }
 
@@ -402,7 +401,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                             'x' => break :operation .extract,
                             'S' => break :operation .print_symbols,
                             else => {
-                                printError(stderr, stderr_config, "'{c}' is not a valid operation.", .{operation_slice[0]});
+                                printArgumentError(zar_io, "'{c}' is not a valid operation.", .{operation_slice[0]});
                                 return;
                             },
                         }
@@ -420,7 +419,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 }
 
                 for (modifier_slice) |modifier_char| {
-                    if (!processModifier(stderr, stderr_config, modifier_char, &modifiers)) {
+                    if (!processModifier(zar_io, modifier_char, &modifiers)) {
                         return;
                     }
                 }
@@ -441,12 +440,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 continue :cur .count_gate;
             },
             .relpos_before => {
-                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "A [relpos]", "a, b or i")) return;
+                if (!checkOptionalArgsBounds(zar_io, args, arg_index, "A [relpos]", "a, b or i")) return;
                 modifiers.move_setting.before = arg;
                 continue :cur .count_gate;
             },
             .relpos_after => {
-                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "A [relpos]", "a, b or i")) return;
+                if (!checkOptionalArgsBounds(zar_io, args, arg_index, "A [relpos]", "a, b or i")) return;
                 modifiers.move_setting.after = arg;
                 continue :cur .count_gate;
             },
@@ -455,9 +454,9 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
                 parser_state = if (modifiers.instance_to_delete == 0) .count else .normal;
             },
             .count => {
-                if (!checkOptionalArgsBounds(stderr, stderr_config, args, arg_index, "An [count]", "N")) return;
+                if (!checkOptionalArgsBounds(zar_io, args, arg_index, "An [count]", "N")) return;
                 modifiers.instance_to_delete = std.fmt.parseUnsigned(u32, arg, 10) catch {
-                    printError(stderr, stderr_config, "[count] must be a positive number, received '{s}'.", .{arg});
+                    printArgumentError(zar_io, "[count] must be a positive number, received '{s}'.", .{arg});
                     return;
                 };
                 parser_state = .normal;
@@ -466,12 +465,12 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (modifiers.help) {
-        printHelp(stdout);
+        printHelp(zar_io.stdout);
         return;
     }
 
     if (modifiers.show_version) {
-        printVersion(stdout);
+        printVersion(zar_io.stdout);
         return;
     }
 
@@ -496,7 +495,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 
     if (operation == .undefined) {
-        printError(stderr, stderr_config, "An operation must be provided.", .{});
+        printArgumentError(zar_io, "An operation must be provided.", .{});
         return;
     }
 
@@ -505,17 +504,17 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
             break :archive_path archive_path;
         }
 
-        printError(stderr, stderr_config, "An archive must be provided.", .{});
+        printArgumentError(zar_io, "An archive must be provided.", .{});
         return;
     };
 
     switch (operation) {
         .insert => {
             var created = false;
-            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(zar_io, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, created);
             defer archive.deinit();
             try archive.parse();
             try archive.insertFiles(files.items);
@@ -523,81 +522,81 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
         },
         .delete => {
             var created = false;
-            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(zar_io, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, created);
             defer archive.deinit();
             try archive.parse();
             try archive.deleteFiles(files.items);
             try archive.flush();
         },
         .print_names => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(zar_io, .opening, archive_path, zar_io.cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, false);
             defer archive.deinit();
             try archive.parse();
             for (archive.files.items) |parsed_file| {
-                stdout.print("{s}\n", .{parsed_file.name}) catch {};
+                zar_io.stdout.print("{s}\n", .{parsed_file.name}) catch {};
             }
         },
         .print_contents => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(zar_io, .opening, archive_path, zar_io.cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, false);
             defer archive.deinit();
             try archive.parse();
             for (archive.files.items) |parsed_file| {
-                parsed_file.contents.write(stdout, stderr) catch {};
+                parsed_file.contents.write(zar_io.stdout, zar_io.stderr) catch {};
             }
         },
         .print_symbols => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{}));
+            const file = try Archive.handleFileIoError(zar_io, .opening, archive_path, zar_io.cwd.openFile(archive_path, .{}));
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, false);
             defer archive.deinit();
             try archive.parse();
             for (archive.symbols.items) |symbol| {
                 if (modifiers.verbose) {
                     if (symbol.file_index == Archive.invalid_file_index) {
-                        stdout.print("?: {s}\n", .{symbol.name}) catch {};
+                        zar_io.stdout.print("?: {s}\n", .{symbol.name}) catch {};
                     } else {
-                        stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name }) catch {};
+                        zar_io.stdout.print("{s}: {s}\n", .{ archive.files.items[symbol.file_index].name, symbol.name }) catch {};
                     }
                 } else {
-                    stdout.print("{s}\n", .{symbol.name}) catch {};
+                    zar_io.stdout.print("{s}\n", .{symbol.name}) catch {};
                 }
             }
         },
         .move => {
             var created = false;
-            const file = try openOrCreateFile(stdout, cwd, archive_path, !modifiers.create, &created);
+            const file = try openOrCreateFile(zar_io, archive_path, !modifiers.create, &created);
             defer file.close();
 
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, created);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, created);
             defer archive.deinit();
             try archive.parse();
             try archive.moveFiles(files.items);
             try archive.flush();
         },
         .quick_append => {
-            printError(stderr, stderr_config, "quick append still needs to be implemented!\n", .{});
+            printArgumentError(zar_io, "quick append still needs to be implemented!\n", .{});
             return error.TODO; // #71
         },
         .ranlib => {
-            const file = try Archive.handleFileIoError(.opening, archive_path, cwd.openFile(archive_path, .{ .mode = .read_write }));
+            const file = try Archive.handleFileIoError(zar_io, .opening, archive_path, zar_io.cwd.openFile(archive_path, .{ .mode = .read_write }));
             defer file.close();
-            var archive = try Archive.init(allocator, cwd, file, archive_path, archive_type, modifiers, false);
+            var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, false);
             defer archive.deinit();
             try archive.parse();
             try archive.flush();
         },
         .extract => {
-            printError(stderr, stderr_config, "extract still needs to be implemented!\n", .{});
+            printArgumentError(zar_io, "extract still needs to be implemented!\n", .{});
             if (modifiers.preserve_original_dates) {
                 return error.TODO; // #74
             }
@@ -610,13 +609,7 @@ pub fn archiveMain(cwd: fs.Dir, allocator: anytype, args: []const []const u8) (A
     }
 }
 
-fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !void {
-    var stderr_buf: [1024]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buf);
-    const stderr = &stderr_writer.interface;
-    const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
-    defer stderr.flush() catch {};
-
+fn handleArchiveError(zar_io: *const ZarIo, err: (Archive.HandledError || Archive.UnhandledError)) !void {
     {
         // we can ignore these errors because we log context specific
         // information about them at the time that they are thrown.
@@ -631,11 +624,11 @@ fn handleArchiveError(err: (Archive.HandledError || Archive.UnhandledError)) !vo
     const unhandled_err: Archive.UnhandledError = @errorCast(err);
 
     switch (unhandled_err) {
-        // These are errors which already have appropraite log messages printed
-        Archive.ParseError.NotArchive => printError(stderr, stderr_config, "Provided file is not an archive.", .{}),
-        Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => printError(stderr, stderr_config, "Malformed archive provided.", .{}),
-        error.OutOfMemory => printError(stderr, stderr_config, "Program ran out of memory.", .{}),
-        error.TODO => printError(stderr, stderr_config, "Unimplemented feature encountered (TODO error)", .{}),
+        // These are errors which already have appropriate log messages printed
+        Archive.ParseError.NotArchive => printArgumentError(zar_io, "Provided file is not an archive.", .{}),
+        Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => printArgumentError(zar_io, "Malformed archive provided.", .{}),
+        error.OutOfMemory => printArgumentError(zar_io, "Program ran out of memory.", .{}),
+        error.TODO => printArgumentError(zar_io, "Unimplemented feature encountered (TODO error)", .{}),
     }
 
     if (debug_errors) return err;

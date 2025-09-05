@@ -10,6 +10,7 @@ const traceNamed = @import("tracy.zig").traceNamed;
 const Allocator = std.mem.Allocator;
 
 const Archive = @import("archive/Archive.zig");
+const ZarIo = @import("archive/ZarIo.zig");
 const main = @import("main.zig");
 const build_options = @import("build_options");
 
@@ -37,7 +38,7 @@ const no_dir = "test/data/none";
 
 // Allows us to invoke zar as a program, just to really confirm it works
 // end-to-end.
-const always_invoke_zar_as_child_process = false;
+const invoke_zar_as_child_process = false;
 
 test "Test Archive Text Basic" {
     const test_path = "test/data/test1";
@@ -789,6 +790,21 @@ const ExpectedOut = struct {
     stderr: ?[]const u8 = null,
 };
 
+fn compareRunResults(expected_out: ExpectedOut, stdout: []const u8, stderr: []const u8) !void {
+    if (expected_out.stdout) |expected_stdout| {
+        try testing.expectEqualStrings(expected_stdout, stdout);
+        errdefer |err| {
+            logger.err("{}, also received stdout \"{s}\", expected \"{s}\"", .{ err, stdout, expected_stdout });
+        }
+    }
+    if (expected_out.stderr) |expected_stderr| {
+        try testing.expectEqualStrings(expected_stderr, stderr);
+        errdefer |err| {
+            logger.err("{}, also received stderr \"{s}\", expected \"{s}\"", .{ err, stdout, expected_stderr });
+        }
+    }
+}
+
 fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_info: TestDirInfo, expected_out: ExpectedOut) !void {
     errdefer |err| {
         logger.err("test failure: {}", .{err});
@@ -799,13 +815,8 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
     try argv.append(allocator, build_options.zar_exe_path);
     try argv.appendSlice(allocator, arguments);
 
-    // argments[0] must be path_to_zar
-    var invoke_as_child_process = always_invoke_zar_as_child_process;
-    // At the moment it's easiest to verify the output of stdout/stderr by launching
-    // zar as a child process, so just doing it like this for now.
-    invoke_as_child_process = invoke_as_child_process or expected_out.stderr != null;
-    invoke_as_child_process = invoke_as_child_process or expected_out.stdout != null;
-    if (invoke_as_child_process) {
+    // arguments[0] must be path_to_zar
+    if (invoke_zar_as_child_process) {
         errdefer |err| {
             // Blocked by a compiler regression... ideally it should be easier to print these args.
             // See: https://zsf.zulipchat.com/#narrow/channel/454371-std/topic/array.20formatting/near/536968619
@@ -826,25 +837,48 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
             allocator.free(result.stderr);
         }
 
-        if (expected_out.stdout) |expected_stdout| {
-            try testing.expectEqualStrings(expected_stdout, result.stdout);
-            errdefer |err| {
-                logger.err("{}, also received stdout \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stdout });
-            }
-        }
-        if (expected_out.stderr) |expected_stderr| {
-            try testing.expectEqualStrings(expected_stderr, result.stderr);
-            errdefer |err| {
-                logger.err("{}, also received stderr \"{s}\", expected \"{s}\"", .{ err, result.stdout, expected_stderr });
-            }
-        }
+        try compareRunResults(expected_out, result.stdout, result.stderr);
     } else {
-        // TODO: don't deinit testing allocator here so that we can confirm
-        // the archiver does everything by the books?
-        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-        defer arena.deinit();
+        // Should we pre-allocate this memory based on the input std in/out buffers?
+        // (and then error if it overflows?)
+        var stdout_writer = std.io.Writer.Allocating.init(allocator);
+        var stderr_writer = std.io.Writer.Allocating.init(allocator);
 
-        main.archiveMain(test_dir_info.zar_wd, allocator, argv.items) catch {};
+        defer {
+            stdout_writer.deinit();
+            stderr_writer.deinit();
+        }
+
+        const zar_io: ZarIo = zar_io: {
+            const stdout = &stdout_writer.writer;
+            const stderr = &stderr_writer.writer;
+
+            const stdout_config = std.io.tty.detectConfig(std.fs.File.stdout());
+            const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
+            break :zar_io .{
+                .cwd = test_dir_info.zar_wd,
+                .stdout = stdout,
+                .stdout_config = stdout_config,
+                .stderr = stderr,
+                .stderr_config = stderr_config,
+            };
+        };
+
+        main.archiveMain(&zar_io, allocator, argv.items) catch {};
+
+        // these calls aren't needed - but just being safe
+        stdout_writer.writer.flush() catch {
+            unreachable;
+        };
+
+        stderr_writer.writer.flush() catch {
+            unreachable;
+        };
+
+        const stdout = stdout_writer.written();
+        const stderr = stderr_writer.written();
+
+        try compareRunResults(expected_out, stdout, stderr);
     }
 }
 

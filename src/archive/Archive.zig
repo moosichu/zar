@@ -8,12 +8,14 @@ const traceNamed = @import("../tracy.zig").traceNamed;
 const fmt = std.fmt;
 const fs = std.fs;
 const mem = std.mem;
-const logger = std.log.scoped(.archive);
 const elf = std.elf;
+const os = std.os;
 const Elf = @import("zld/Zld.zig").Elf;
 const MachO = @import("zld/Zld.zig").MachO;
 const macho = std.macho;
 const Coff = @import("zld/Zld.zig").Coff;
+const ZarIo = @import("ZarIo.zig");
+
 // We don't have any kind of bitcode parsing support at the moment, but we need
 // to report dealing with bitcode files as an error. So embed magic like this
 // matching the format of the actual zld package for now.
@@ -27,7 +29,7 @@ const allocator_limit = 10000000;
 
 arena: std.heap.ArenaAllocator,
 gpa: Allocator,
-dir: fs.Dir,
+zar_io: *const ZarIo,
 file: fs.File,
 name: []const u8,
 created: bool,
@@ -265,13 +267,15 @@ fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
     return file_writer.pos + file_writer.interface.end;
 }
 
-pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, err: IoError) HandledIoError {
+// this is a poor way of dealing with these errors... it's too generic and really we should be context-sensitively dealing with these
+// so we can report them helpfully to the users
+pub fn printFileIoError(zar_io: *const ZarIo, comptime context: ErrorContext, file_name: []const u8, err: IoError) HandledIoError {
     const context_str = @tagName(context);
 
     switch (err) {
-        error.AccessDenied => logger.err("Error " ++ context_str ++ " '{s}', access denied.", .{file_name}),
-        error.FileNotFound => logger.err("Error " ++ context_str ++ " '{s}', file not found.", .{file_name}),
-        else => logger.err("Error " ++ context_str ++ " '{s}'.", .{file_name}),
+        error.AccessDenied => zar_io.printError(context_str ++ " '{s}', access denied.", .{file_name}),
+        error.FileNotFound => zar_io.printError(context_str ++ " '{s}', file not found.", .{file_name}),
+        else => zar_io.printError(context_str ++ " '{s}'.", .{file_name}),
     }
     if (test_errors_handled) return error.Handled;
     return err;
@@ -279,9 +283,9 @@ pub fn printFileIoError(comptime context: ErrorContext, file_name: []const u8, e
 
 // The weird return type is so that we can distinguish between handled and unhandled IO errors,
 // i.e. if test_errors_handled is set to true, and raw calls to io operations will return in a compile failure
-pub fn handleFileIoError(comptime context: ErrorContext, file_name: []const u8, fallible: anytype) HandledIoError!@typeInfo(@TypeOf(fallible)).error_union.payload {
+pub fn handleFileIoError(zar_io: *const ZarIo, comptime context: ErrorContext, file_name: []const u8, fallible: anytype) HandledIoError!@typeInfo(@TypeOf(fallible)).error_union.payload {
     const unwrapped_result = fallible catch |err| {
-        return printFileIoError(context, file_name, err);
+        return printFileIoError(zar_io, context, file_name, err);
     };
     return unwrapped_result;
 }
@@ -298,7 +302,7 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
 
 pub fn init(
     allocator: std.mem.Allocator,
-    dir: fs.Dir,
+    zar_io: *const ZarIo,
     file: fs.File,
     name: []const u8,
     output_archive_type: ArchiveType,
@@ -308,7 +312,7 @@ pub fn init(
     return Archive{
         .gpa = allocator,
         .arena = std.heap.ArenaAllocator.init(allocator),
-        .dir = dir,
+        .zar_io = zar_io,
         .file = file,
         .name = name,
         .inferred_archive_type = .ambiguous,
@@ -317,7 +321,7 @@ pub fn init(
         .symbols = .{},
         .file_name_to_index = .{},
         .modifiers = modifiers,
-        .stat = try handleFileIoError(.stat, name, file.stat()),
+        .stat = try handleFileIoError(zar_io, .stat, name, file.stat()),
         .created = created,
     };
 }
@@ -396,7 +400,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     }
 
     // Overwrite all contents
-    try handleFileIoError(.seeking, self.name, self.file.seekTo(0));
+    try handleFileIoError(self.zar_io, .seeking, self.name, self.file.seekTo(0));
 
     // TrackingBufferedWriter no longer appears to be necessary,
     // as fs.File.Writer has a "pos" field and a buffer now.
@@ -405,7 +409,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     const writer = &file_writer.interface;
     defer writer.flush() catch {};
 
-    try handleFileIoError(.writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
+    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
 
@@ -522,19 +526,19 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                 const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
 
-                try handleFileIoError(.writing, self.name, writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size }));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size }));
 
                 {
                     const tracy_scope_inner = traceNamed(@src(), "Write Symbol Count");
                     defer tracy_scope_inner.end();
                     if (format == .gnu64) {
-                        try handleFileIoError(.writing, self.name, writer.writeInt(
+                        try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
                             u64,
                             @as(u64, @intCast(self.symbols.items.len)),
                             .big,
                         ));
                     } else {
-                        try handleFileIoError(.writing, self.name, writer.writeInt(
+                        try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
                             u32,
                             @as(u32, @intCast(self.symbols.items.len)),
                             .big,
@@ -568,13 +572,13 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                     for (self.symbols.items) |symbol| {
                         if (format == .gnu64) {
-                            try handleFileIoError(.writing, self.name, writer.writeInt(
+                            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
                                 i64,
                                 relative_file_offsets[symbol.file_index] + @as(i64, @intCast(offset_to_files)),
                                 .big,
                             ));
                         } else {
-                            try handleFileIoError(.writing, self.name, writer.writeInt(
+                            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
                                 i32,
                                 relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files)),
                                 .big,
@@ -583,7 +587,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     }
                 }
 
-                try handleFileIoError(.writing, self.name, writer.writeAll(symbol_table));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(symbol_table));
             }
 
             // Write the string table itself
@@ -594,7 +598,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     while (string_table.items.len % self.output_archive_type.getAlignment() != 0) {
                         try string_table.append('\n');
                     }
-                    try handleFileIoError(.writing, self.name, writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items }));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items }));
                 }
             }
         },
@@ -633,16 +637,16 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     int_size + // Int describing size of symbol table's strings
                     symbol_table.len; // The lengths of strings themselves
 
-                try handleFileIoError(.writing, self.name, writer.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size }));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size }));
 
                 const endian = builtin.cpu.arch.endian();
 
                 if (format == .darwin64) {
-                    try handleFileIoError(.writing, self.name, writer.writeAll(bsd_symdef_64_magic));
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @as(u64, @intCast(num_ranlib_bytes)), endian));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(bsd_symdef_64_magic));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u64, @as(u64, @intCast(num_ranlib_bytes)), endian));
                 } else {
-                    try handleFileIoError(.writing, self.name, writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00"));
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @as(u32, @intCast(num_ranlib_bytes)), endian));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00"));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u32, @as(u32, @intCast(num_ranlib_bytes)), endian));
                 }
 
                 const ranlibs = try allocator.alloc(Ranlib(IntType), self.symbols.items.len);
@@ -660,15 +664,15 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files));
                 }
 
-                try handleFileIoError(.writing, self.name, writer.writeAll(mem.sliceAsBytes(ranlibs)));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(mem.sliceAsBytes(ranlibs)));
 
                 if (format == .darwin64) {
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
                 } else {
-                    try handleFileIoError(.writing, self.name, writer.writeInt(u32, @as(u32, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
+                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u32, @as(u32, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
                 }
 
-                try handleFileIoError(.writing, self.name, writer.writeAll(symbol_table));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(symbol_table));
             }
         },
         // This needs to be able to tell whatsupp.
@@ -713,21 +717,21 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         };
 
         // TODO: handle errors
-        _ = try handleFileIoError(.writing, self.name, writer.write(&header_buffer));
+        _ = try handleFileIoError(self.zar_io, .writing, self.name, writer.write(&header_buffer));
 
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
-            try handleFileIoError(.writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(.writing, self.name, writer.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer))));
+            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(file.name));
+            try handleFileIoError(self.zar_io, .writing, self.name, writer.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer))));
         }
 
         if (self.output_archive_type != .gnuthin) {
-            try handleFileIoError(.writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(.writing, self.name, writer.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer))));
+            try handleFileIoError(self.zar_io, .writing, self.name, file.contents.write(writer, null));
+            try handleFileIoError(self.zar_io, .writing, self.name, writer.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer))));
         }
     }
 
-    try handleFileIoError(.writing, self.name, file_writer.end());
+    try handleFileIoError(self.zar_io, .writing, self.name, file_writer.end());
 }
 
 pub fn deinit(self: *Archive) void {
@@ -780,7 +784,7 @@ pub fn moveFiles(self: *Archive, file_names: []const []const u8) !void {
             // const other_files = file_names[1..file_names.len];
         },
     }
-    logger.err("Move operation still needs to be implemented!\n", .{});
+    self.zar_io.printError("Move operation still needs to be implemented!\n", .{});
     return error.TODO;
 }
 
@@ -793,7 +797,7 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     for (self.files.items) |archived_file| {
         for (file_names) |file_name| {
             if (std.mem.eql(u8, archived_file.name, file_name)) {
-                const file = try self.dir.createFile(archived_file.name, .{});
+                const file = try self.zar_io.cwd.createFile(archived_file.name, .{});
                 defer file.close();
 
                 try file.writeAll(archived_file.contents.bytes);
@@ -807,12 +811,12 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     // TODO: make this read directly from the file contents buffer!
 
     // Get the file magic
-    try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
+    try handleFileIoError(self.zar_io, .seeking, archived_file.name, file.seekTo(file_offset));
 
     var magic: [4]u8 = undefined;
-    _ = try handleFileIoError(.reading, archived_file.name, file.deprecatedReader().read(&magic));
+    _ = try handleFileIoError(self.zar_io, .reading, archived_file.name, file.deprecatedReader().read(&magic));
 
-    try handleFileIoError(.seeking, archived_file.name, file.seekTo(file_offset));
+    try handleFileIoError(self.zar_io, .seeking, archived_file.name, file.seekTo(file_offset));
 
     blk: {
         // TODO: Load object from memory (upstream zld)
@@ -855,7 +859,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 }
             }
         } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
-            logger.warn("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{archived_file.name});
+            self.zar_io.printError("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{archived_file.name});
             break :blk;
 
             // var bitcode_file = Bitcode{ .file = file, .name = archived_file.name };
@@ -936,7 +940,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
     // TODO: distribute this across n jobs in different chunks?
     for (file_names) |file_name| {
         // Open the file and read all of its contents
-        const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_only }));
+        const file = try handleFileIoError(self.zar_io, .opening, file_name, self.zar_io.cwd.openFile(file_name, .{ .mode = .read_only }));
         defer file.close();
 
         // We only need to do this because file stats don't include
@@ -950,13 +954,13 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
 
         // FIXME: Currently windows doesnt support the Stat struct
         if (builtin.os.tag == .windows) {
-            const file_stats = try handleFileIoError(.stat, file_name, file.stat());
+            const file_stats = try handleFileIoError(self.zar_io, .stat, file_name, file.stat());
             // Convert timestamp from ns to s
             mtime = file_stats.mtime;
             size = file_stats.size;
             mode = file_stats.mode;
         } else {
-            const file_stats = try handleFileIoError(.stat, file_name, std.posix.fstat(file.handle));
+            const file_stats = try handleFileIoError(self.zar_io, .stat, file_name, std.posix.fstat(file.handle));
 
             gid = file_stats.gid;
             uid = file_stats.uid;
@@ -994,7 +998,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
         var archived_file = ArchivedFile{ // was var
             .name = try allocator.dupe(u8, fs.path.basename(file_name)),
             .contents = Contents{
-                .bytes = try handleFileIoError(.reading, file_name, bytes_or_io_error),
+                .bytes = try handleFileIoError(self.zar_io, .reading, file_name, bytes_or_io_error),
                 .length = size,
                 .mode = mode,
                 .timestamp = timestamp,
@@ -1030,7 +1034,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
-        const bytes_read = try handleFileIoError(.reading, self.name, reader.read(&magic));
+        const bytes_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&magic));
 
         if (bytes_read == 0) {
             // Archive is empty and that is ok!
@@ -1062,7 +1066,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
             const has_line_to_process = result: {
-                const chars_read = try handleFileIoError(.reading, self.name, reader.read(&first_line_buffer));
+                const chars_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&first_line_buffer));
 
                 if (chars_read < first_line_buffer.len) {
                     break :result false;
@@ -1072,7 +1076,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             };
 
             if (!has_line_to_process) {
-                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
+                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
 
@@ -1096,7 +1100,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     allocator.free(string_table_contents);
                 }
 
-                try handleFileIoError(.reading, self.name, reader.readNoEof(string_table_contents));
+                try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(string_table_contents));
                 break;
             } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
                 has_gnu_symbol_table = true;
@@ -1111,13 +1115,13 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
                 const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                const num_symbols = try handleFileIoError(.reading, self.name, reader.readInt(u32, .big));
+                const num_symbols = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, .big));
 
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
                 for (number_array, 0..) |_, number_index| {
-                    number_array[number_index] = try handleFileIoError(.reading, self.name, reader.readInt(u32, .big));
+                    number_array[number_index] = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, .big));
                 }
                 defer allocator.free(number_array);
 
@@ -1125,7 +1129,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
-                const contents_read = try handleFileIoError(.reading, self.name, reader.read(gnu_symbol_table_contents));
+                const contents_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(gnu_symbol_table_contents));
                 if (contents_read < gnu_symbol_table_contents.len) {
                     return ParseError.MalformedArchive;
                 }
@@ -1171,7 +1175,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
             } else {
-                try handleFileIoError(.seeking, self.name, reader.context.seekTo(starting_seek_pos));
+                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(starting_seek_pos));
                 break;
             }
         }
@@ -1184,11 +1188,11 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
     while (true) {
         const file_offset = file_offset_result: {
-            var current_file_offset = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+            var current_file_offset = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
             // Archived files must start on even byte boundaries!
             // https://www.unix.com/man-page/opensolaris/3head/ar.h/
             if (@mod(current_file_offset, 2) == 1) {
-                try handleFileIoError(.accessing, self.name, reader.skipBytes(1, .{}));
+                try handleFileIoError(self.zar_io, .accessing, self.name, reader.skipBytes(1, .{}));
                 current_file_offset = current_file_offset + 1;
             }
             break :file_offset_result current_file_offset;
@@ -1197,7 +1201,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
         const archive_header = reader.readStruct(Header) catch |err| switch (err) {
             error.EndOfStream => break,
             else => {
-                return printFileIoError(.reading, self.name, err);
+                return printFileIoError(self.zar_io, .reading, self.name, err);
             },
         };
 
@@ -1298,11 +1302,11 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
-                const current_seek_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+                const current_seek_pos = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
                 var symbol_magic_check_buffer: [bsd_symdef_longest_magic]u8 = undefined;
 
                 // TODO: handle not reading enough characters!
-                const chars_read = try handleFileIoError(.reading, self.name, reader.read(&symbol_magic_check_buffer));
+                const chars_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&symbol_magic_check_buffer));
 
                 var sorted = false;
 
@@ -1318,7 +1322,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                         }
 
                         if (chars_read - magic_len > 0) {
-                            try handleFileIoError(.seeking, self.name, reader.context.seekBy(@as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read))));
+                            try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(@as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read))));
                         }
 
                         seek_forward_amount = seek_forward_amount - @as(u32, @intCast(magic_len));
@@ -1334,14 +1338,14 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     const endianess = .little;
 
                     {
-                        const current_pos = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+                        const current_pos = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
                         const remainder = @as(u32, @intCast((self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment()));
                         seek_forward_amount = seek_forward_amount - remainder;
-                        try handleFileIoError(.seeking, self.name, reader.context.seekBy(remainder));
+                        try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(remainder));
                     }
 
                     // TODO: error if negative (because spec defines this as a long, so should never be that large?)
-                    const num_ranlib_bytes = try handleFileIoError(.reading, self.name, reader.readInt(IntType, endianess));
+                    const num_ranlib_bytes = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(IntType, endianess));
                     seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
 
                     // TODO: error if this doesn't divide properly?
@@ -1350,12 +1354,12 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     const ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
 
                     // TODO: error handling
-                    _ = try handleFileIoError(.reading, self.name, reader.read(ranlib_bytes));
+                    _ = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(ranlib_bytes));
                     seek_forward_amount = seek_forward_amount - @as(u32, @intCast(num_ranlib_bytes));
 
                     const ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
-                    const symbol_strings_length = try handleFileIoError(.reading, self.name, reader.readInt(u32, endianess));
+                    const symbol_strings_length = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, endianess));
                     // TODO: We don't really need this information, but maybe it could come in handy
                     // later?
                     _ = symbol_strings_length;
@@ -1364,7 +1368,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                     const symbol_string_bytes = try allocator.alloc(u8, seek_forward_amount);
                     seek_forward_amount = 0;
-                    _ = try handleFileIoError(.reading, self.name, reader.read(symbol_string_bytes));
+                    _ = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(symbol_string_bytes));
 
                     if (!self.modifiers.build_symbol_table) {
                         for (ranlibs) |ranlib| {
@@ -1383,16 +1387,16 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                         // We have a symbol table!
                     }
-                    try handleFileIoError(.seeking, self.name, reader.context.seekBy(seek_forward_amount));
+                    try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(seek_forward_amount));
                     continue;
                 }
 
-                try handleFileIoError(.seeking, self.name, reader.context.seekTo(current_seek_pos));
+                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(current_seek_pos));
             }
 
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 
-            try handleFileIoError(.reading, self.name, reader.readNoEof(archive_name_buffer));
+            try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(archive_name_buffer));
 
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
@@ -1418,26 +1422,26 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             },
         };
 
-        const offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+        const offset_hack = try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.getPos());
 
         if (self.inferred_archive_type == .gnuthin) {
-            var thin_file = try handleFileIoError(.opening, trimmed_archive_name, self.dir.openFile(trimmed_archive_name, .{}));
+            var thin_file = try handleFileIoError(self.zar_io, .opening, trimmed_archive_name, self.zar_io.cwd.openFile(trimmed_archive_name, .{}));
             defer thin_file.close();
 
-            try handleFileIoError(.reading, trimmed_archive_name, thin_file.deprecatedReader().readNoEof(parsed_file.contents.bytes));
+            try handleFileIoError(self.zar_io, .reading, trimmed_archive_name, thin_file.deprecatedReader().readNoEof(parsed_file.contents.bytes));
         } else {
-            try handleFileIoError(.reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
+            try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
         }
 
         if (self.modifiers.build_symbol_table) {
-            const post_offset_hack = try handleFileIoError(.seeking, self.name, reader.context.getPos());
+            const post_offset_hack = try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.getPos());
             // TODO: Actually handle these errors!
             // … and get this working in the first place!
             self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
                 return error.TODO;
             };
 
-            try handleFileIoError(.seeking, self.name, reader.context.seekTo(post_offset_hack));
+            try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(post_offset_hack));
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
@@ -1448,7 +1452,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
     }
 
     if (is_first) {
-        const current_position = try handleFileIoError(.accessing, self.name, reader.context.getPos());
+        const current_position = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
         if (current_position > magic_string.len) {
             return ParseError.MalformedArchive;
         }
@@ -1522,7 +1526,7 @@ pub const MRIParser = struct {
         return list.toOwnedSlice();
     }
 
-    pub fn execute(self: *Self, allocator: Allocator, stdout: fs.File.Writer, stderr: fs.File.Writer) !void {
+    pub fn execute(self: *Self, allocator: Allocator, stdout: *std.io.Writer, stderr: *std.io.Writer) !void {
         // Split the file into lines
         var parser = mem.split(u8, self.script, "\n");
 
@@ -1565,7 +1569,7 @@ pub const MRIParser = struct {
                             .clear => {
                                 // This is a bit of a hack but its reliable.
                                 // Instead of clearing out unsaved changes, we re-open the current file, which overwrites the changes.
-                                const file = try handleFileIoError(.opening, self.file_name, self.dir.openFile(self.file_name.?, .{ .mode = .read_write }));
+                                const file = try handleFileIoError(self.zar_io, .opening, self.file_name, self.zar_io.cwd.openFile(self.file_name.?, .{ .mode = .read_write }));
                                 self.archive = Archive.init(file, self.file_name.?);
                                 defer self.archive.deinit();
 
@@ -1585,7 +1589,7 @@ pub const MRIParser = struct {
                             .open => {
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try handleFileIoError(.opening, file_name, self.dir.openFile(file_name, .{ .mode = .read_write }));
+                                const file = try handleFileIoError(self.zar_io, .opening, file_name, self.zar_io.cwd.openFile(file_name, .{ .mode = .read_write }));
                                 self.archive = Archive.init(file, file_name);
                                 self.file_name = file_name;
 
@@ -1595,7 +1599,7 @@ pub const MRIParser = struct {
                                 // TODO: Thin archives creation
                                 const file_name = getToken(&line_parser).?;
 
-                                const file = try self.dir.createFile(file_name, .{ .read = true });
+                                const file = try self.zar_io.cwd.createFile(file_name, .{ .read = true });
                                 self.archive = Archive.init(file, file_name);
                                 self.file_name = file_name;
 
