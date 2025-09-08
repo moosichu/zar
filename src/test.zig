@@ -611,7 +611,7 @@ fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: []
 const targets = result: {
     const os_fields = std.meta.fields(OperatingSystem);
     const arch_fields = std.meta.fields(Architecture);
-    var aggregator: [os_fields.len * arch_fields.len]Target = undefined;
+    var aggregator: [(os_fields.len - 1) * (arch_fields.len - 1)]Target = undefined;
     var target_index = 0;
     // "for"s were inline
     for (os_fields) |os_field| {
