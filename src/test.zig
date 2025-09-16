@@ -40,6 +40,49 @@ const no_dir = "test/data/none";
 // end-to-end.
 const invoke_zar_as_child_process = false;
 
+// TODO: sort these out :)
+
+test "Test Argument Errors" {
+    if (builtin.target.os.tag == .windows) {
+        return;
+    }
+    const allocator = std.testing.allocator;
+    var test_dir_info = try TestDirInfo.getInfo();
+    defer test_dir_info.cleanup();
+
+    var argv: std.ArrayList([]const u8) = .{};
+    defer argv.deinit(allocator);
+
+    {
+        try argv.resize(allocator, 0);
+        const expected_out: ExpectedOut = .{
+            .stderr = .{ .starts_with = "zar: error: An operation must be provided.\n" },
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
+
+    {
+        try argv.resize(allocator, 0);
+        try argv.append(allocator, "j");
+        const expected_out: ExpectedOut = .{
+            .stderr = .{ .starts_with = "zar: error: 'j' is not a valid operation.\n" },
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
+
+    {
+        try argv.resize(allocator, 0);
+        try argv.append(allocator, "rj");
+        const expected_out: ExpectedOut = .{
+            .stderr = .{ .starts_with = "zar: error: 'j' is not a valid modifier.\n" },
+        };
+
+        try invokeZar(allocator, argv.items, test_dir_info, expected_out);
+    }
+}
+
 test "Test Archive Text Basic" {
     const test_path = "test/data/test1";
     const test_names = [_][]const u8{ "input1.txt", "input2.txt" };
@@ -552,49 +595,6 @@ const TestSequence = struct {
     }
 };
 
-// TODO: sort these out :)
-
-// test "Test Argument Errors" {
-//     if (builtin.target.os.tag == .windows) {
-//         return;
-//     }
-//     const allocator = std.testing.allocator;
-//     var test_dir_info = try TestDirInfo.getInfo();
-//     defer test_dir_info.cleanup();
-
-//     var argv: std.ArrayList([]const u8) = .{};
-//     defer argv.deinit(allocator);
-
-//     {
-//         try argv.resize(allocator, 0);
-//         const expected_out: ExpectedOut = .{
-//             .stderr = "zar: error: An operation must be provided.\n",
-//         };
-
-//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-//     }
-
-//     {
-//         try argv.resize(allocator, 0);
-//         try argv.append(allocator, "j");
-//         const expected_out: ExpectedOut = .{
-//             .stderr = "zar: error: 'j' is not a valid operation.\n",
-//         };
-
-//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-//     }
-
-//     {
-//         try argv.resize(allocator, 0);
-//         try argv.append(allocator, "rj");
-//         const expected_out: ExpectedOut = .{
-//             .stderr = "zar: error: 'j' is not a valid modifier.\n",
-//         };
-
-//         try invokeZar(allocator, argv.items, test_dir_info, expected_out);
-//     }
-// }
-
 fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: [][][]u8, symbol_count: u32) !void {
     for (file_names, 0..) |_, index| {
         file_names[index] = try std.fmt.allocPrint(allocator, "index_{}.o", .{index});
@@ -786,24 +786,38 @@ fn compareGeneratedArchives(test_dir_info: TestDirInfo) !void {
 }
 
 const ExpectedOut = struct {
-    stdout: ?[]const u8 = null,
-    stderr: ?[]const u8 = null,
-};
+    const Comparison = union(enum) {
+        none: void,
+        starts_with: []const u8,
+        matches: []const u8,
 
-fn compareRunResults(expected_out: ExpectedOut, stdout: []const u8, stderr: []const u8) !void {
-    if (expected_out.stdout) |expected_stdout| {
-        try testing.expectEqualStrings(expected_stdout, stdout);
-        errdefer |err| {
-            logger.err("{}, also received stdout \"{s}\", expected \"{s}\"", .{ err, stdout, expected_stdout });
+        pub fn compare(comparison: Comparison, name: []const u8, actual_out: []const u8) error{ TestExpectedEqual, TestExpectedStartsWith }!void {
+            switch (comparison) {
+                .none => {},
+                .starts_with => |expected_out| {
+                    try testing.expectStringStartsWith(actual_out, expected_out);
+                    errdefer {
+                        logger.err("{s} was:\n{s}\n\nexpected it to start with:\n{s}\n", .{ name, actual_out, expected_out });
+                    }
+                },
+                .matches => |expected_out| {
+                    try testing.expectEqualStrings(expected_out, actual_out);
+                    errdefer {
+                        logger.err("{s} was:\n{s}\n\nexpected:\n{s}\n", .{ name, actual_out, expected_out });
+                    }
+                },
+            }
         }
+    };
+
+    pub fn compare(expected_out: ExpectedOut, actual_stdout: []const u8, actual_stderr: []const u8) !void {
+        try expected_out.stdout.compare("stdout", actual_stdout);
+        try expected_out.stderr.compare("stderr", actual_stderr);
     }
-    if (expected_out.stderr) |expected_stderr| {
-        try testing.expectEqualStrings(expected_stderr, stderr);
-        errdefer |err| {
-            logger.err("{}, also received stderr \"{s}\", expected \"{s}\"", .{ err, stdout, expected_stderr });
-        }
-    }
-}
+
+    stdout: Comparison = .none,
+    stderr: Comparison = .none,
+};
 
 fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_info: TestDirInfo, expected_out: ExpectedOut) !void {
     errdefer |err| {
@@ -837,7 +851,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
             allocator.free(result.stderr);
         }
 
-        try compareRunResults(expected_out, result.stdout, result.stderr);
+        try expected_out.compare(result.stdout, result.stderr);
     } else {
         // Should we pre-allocate this memory based on the input std in/out buffers?
         // (and then error if it overflows?)
@@ -853,8 +867,8 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
             const stdout = &stdout_writer.writer;
             const stderr = &stderr_writer.writer;
 
-            const stdout_config = std.io.tty.detectConfig(std.fs.File.stdout());
-            const stderr_config = std.io.tty.detectConfig(std.fs.File.stderr());
+            const stdout_config: std.io.tty.Config = .no_color;
+            const stderr_config: std.io.tty.Config = .no_color;
             break :zar_io .{
                 .cwd = test_dir_info.zar_wd,
                 .stdout = stdout,
@@ -878,7 +892,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
         const stdout = stdout_writer.written();
         const stderr = stderr_writer.written();
 
-        try compareRunResults(expected_out, stdout, stderr);
+        try expected_out.compare(stdout, stderr);
     }
 }
 
@@ -915,8 +929,8 @@ fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !
         allocator.free(llvm_run_result.stderr);
     }
     try invokeZar(allocator, arguments, test_dir_info, .{
-        .stderr = llvm_run_result.stderr,
-        .stdout = llvm_run_result.stdout,
+        .stderr = .{ .matches = llvm_run_result.stderr },
+        .stdout = .{ .matches = llvm_run_result.stdout },
     });
     try compareGeneratedArchives(test_dir_info);
 }
