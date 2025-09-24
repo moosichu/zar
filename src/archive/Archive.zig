@@ -137,6 +137,7 @@ pub const FlushError = error{};
 
 pub const CriticalError = error{
     OutOfMemory,
+    ReadFailed,
     TODO,
 };
 
@@ -267,6 +268,12 @@ fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
     return file_writer.pos + file_writer.interface.end;
 }
 
+// This exists because seekBy is currently bugged. See: https://github.com/ziglang/zig/issues/25087
+fn seekByTempFix(file_reader: *std.fs.File.Reader, offset: i64) !void {
+    try file_reader.seekTo(@intCast(@as(i64, @intCast(file_reader.logicalPos())) + offset));
+}
+
+// deprecated
 // this is a poor way of dealing with these errors... it's too generic and really we should be context-sensitively dealing with these
 // so we can report them helpfully to the users
 pub fn printFileIoError(zar_io: *const ZarIo, comptime context: ErrorContext, file_name: []const u8, err: IoError) HandledIoError {
@@ -1026,15 +1033,52 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
     }
 }
 
-pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!void {
+const RootError = error{ ReadFailed, Unseekable, Unexpected, AccessDenied };
+
+fn printArchiveReadError(zar_io: *const ZarIo, file_name: []const u8, root_err: RootError, file_reader: *const fs.File.Reader) void {
+    const err = if (file_reader.err) |err| err else root_err;
+    switch (err) {
+        error.InputOutput,
+        error.SystemResources,
+        error.IsDir,
+        error.OperationAborted,
+        error.BrokenPipe,
+        error.ConnectionResetByPeer,
+        error.ConnectionTimedOut,
+        error.NotOpenForReading,
+        error.SocketNotConnected,
+        error.WouldBlock,
+        error.Canceled,
+        error.AccessDenied,
+        error.ProcessNotFound,
+        error.LockViolation,
+        error.Unexpected,
+        error.ReadFailed,
+        error.Unseekable,
+        => {}, // We just handle these errors generically
+    }
+    zar_io.printError("Failed to read archive {s}, an io error occured.", .{file_name});
+}
+
+const archive_reader_buffer_size = 4096;
+
+pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
     const allocator = self.arena.allocator();
     const tracy = trace(@src());
     defer tracy.end();
-    const reader = self.file.deprecatedReader();
+
+    const endianess = builtin.cpu.arch.endian();
+
+    var reader_buffer: [archive_reader_buffer_size]u8 = undefined;
+    var file_reader = self.file.reader(&reader_buffer);
+    const reader = &file_reader.interface;
     {
         // Is the magic header found at the start of the archive?
         var magic: [magic_string.len]u8 = undefined;
-        const bytes_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&magic));
+        const bytes_read = reader.readSliceShort(&magic) catch |err| {
+            printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+            return err;
+        };
 
         if (bytes_read == 0) {
             // Archive is empty and that is ok!
@@ -1066,7 +1110,10 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             var first_line_buffer: [gnu_first_line_buffer_length]u8 = undefined;
 
             const has_line_to_process = result: {
-                const chars_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&first_line_buffer));
+                const chars_read = reader.readSliceShort(&first_line_buffer) catch |err| {
+                    printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+                    return err;
+                };
 
                 if (chars_read < first_line_buffer.len) {
                     break :result false;
@@ -1076,7 +1123,15 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             };
 
             if (!has_line_to_process) {
-                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(starting_seek_pos));
+                file_reader.seekTo(starting_seek_pos) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
                 break;
             }
 
@@ -1100,7 +1155,15 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                     allocator.free(string_table_contents);
                 }
 
-                try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(string_table_contents));
+                reader.readSliceAll(string_table_contents) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
                 break;
             } else if (!has_gnu_symbol_table and first_line_buffer[0] == '/') {
                 has_gnu_symbol_table = true;
@@ -1115,13 +1178,30 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
                 const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
-                const num_symbols = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, .big));
+                // TODO: why is this big endian?
+                const num_symbols = reader.takeInt(u32, .big) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
 
                 var num_bytes_remaining = symbol_table_num_bytes - @sizeOf(u32);
 
                 const number_array = try allocator.alloc(u32, num_symbols);
                 for (number_array, 0..) |_, number_index| {
-                    number_array[number_index] = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, .big));
+                    number_array[number_index] = reader.takeInt(u32, .big) catch |err| {
+                        switch (err) {
+                            error.EndOfStream => return ParseError.NotArchive,
+                            else => |root_err| {
+                                printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                return error.ReadFailed;
+                            },
+                        }
+                    };
                 }
                 defer allocator.free(number_array);
 
@@ -1129,7 +1209,10 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 gnu_symbol_table_contents = try allocator.alloc(u8, num_bytes_remaining);
 
-                const contents_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(gnu_symbol_table_contents));
+                const contents_read = reader.readSliceShort(gnu_symbol_table_contents) catch |err| {
+                    printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+                    return err;
+                };
                 if (contents_read < gnu_symbol_table_contents.len) {
                     return ParseError.MalformedArchive;
                 }
@@ -1175,7 +1258,15 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                 starting_seek_pos = starting_seek_pos + first_line_buffer.len + symbol_table_num_bytes;
             } else {
-                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(starting_seek_pos));
+                file_reader.seekTo(starting_seek_pos) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
                 break;
             }
         }
@@ -1188,20 +1279,27 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
     while (true) {
         const file_offset = file_offset_result: {
-            var current_file_offset = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
             // Archived files must start on even byte boundaries!
             // https://www.unix.com/man-page/opensolaris/3head/ar.h/
-            if (@mod(current_file_offset, 2) == 1) {
-                try handleFileIoError(self.zar_io, .accessing, self.name, reader.skipBytes(1, .{}));
-                current_file_offset = current_file_offset + 1;
+            if (@mod(file_reader.logicalPos(), 2) == 1) {
+                seekByTempFix(&file_reader, 1) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
             }
-            break :file_offset_result current_file_offset;
+            break :file_offset_result file_reader.logicalPos();
         };
 
-        const archive_header = reader.readStruct(Header) catch |err| switch (err) {
+        const archive_header = reader.takeStruct(Header, endianess) catch |err| switch (err) {
             error.EndOfStream => break,
-            else => {
-                return printFileIoError(self.zar_io, .reading, self.name, err);
+            else => |root_err| {
+                printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                return error.ReadFailed;
             },
         };
 
@@ -1302,11 +1400,14 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 // TODO: make sure this does a check on self.inferred_archive_type!
 
                 // This could be the symbol table! So parse that here!
-                const current_seek_pos = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
+                const current_seek_pos = file_reader.logicalPos();
                 var symbol_magic_check_buffer: [bsd_symdef_longest_magic]u8 = undefined;
 
                 // TODO: handle not reading enough characters!
-                const chars_read = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(&symbol_magic_check_buffer));
+                const chars_read = reader.readSliceShort(&symbol_magic_check_buffer) catch |err| {
+                    printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+                    return err;
+                };
 
                 var sorted = false;
 
@@ -1322,7 +1423,16 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                         }
 
                         if (chars_read - magic_len > 0) {
-                            try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(@as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read))));
+                            const seek_amount = @as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read));
+                            seekByTempFix(&file_reader, seek_amount) catch |err| {
+                                switch (err) {
+                                    error.EndOfStream => return ParseError.NotArchive,
+                                    else => |root_err| {
+                                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                        return error.ReadFailed;
+                                    },
+                                }
+                            };
                         }
 
                         seek_forward_amount = seek_forward_amount - @as(u32, @intCast(magic_len));
@@ -1334,32 +1444,68 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
                 };
 
                 if (magic_match) {
-                    // TODO: make this target arch endianess
-                    const endianess = .little;
-
+                    // TODO: comment on alignment stuff... (really should have done this when this was written!)
                     {
-                        const current_pos = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
+                        const current_pos = file_reader.logicalPos();
                         const remainder = @as(u32, @intCast((self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment()));
                         seek_forward_amount = seek_forward_amount - remainder;
-                        try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(remainder));
+                        seekByTempFix(&file_reader, remainder) catch |err| {
+                            switch (err) {
+                                error.EndOfStream => return ParseError.NotArchive,
+                                else => |root_err| {
+                                    printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                    return error.ReadFailed;
+                                },
+                            }
+                        };
                     }
 
                     // TODO: error if negative (because spec defines this as a long, so should never be that large?)
-                    const num_ranlib_bytes = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(IntType, endianess));
+                    const num_ranlib_bytes_unchecked = reader.takeInt(IntType, endianess) catch |err| {
+                        switch (err) {
+                            error.EndOfStream => return ParseError.NotArchive,
+                            else => |root_err| {
+                                printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                return error.ReadFailed;
+                            },
+                        }
+                    };
+                    const num_ranlib_bytes: u32 = num_ranlib_bytes: {
+                        if (num_ranlib_bytes_unchecked < 0) {
+                            // TODO: Malformed Archive, log error
+                            return error.TODO;
+                        }
+                        break :num_ranlib_bytes @intCast(num_ranlib_bytes_unchecked);
+                    };
                     seek_forward_amount = seek_forward_amount - @as(u32, @sizeOf(IntType));
 
                     // TODO: error if this doesn't divide properly?
-                    // const num_symbols = @divExact(num_ranlib_bytes, @sizeOf(Ranlib(IntType)));
+                    // const num_symbols = @divExact(num_ranlib_bytes_unchecked, @sizeOf(Ranlib(IntType)));
 
-                    const ranlib_bytes = try allocator.alloc(u8, @as(u32, @intCast(num_ranlib_bytes)));
+                    const ranlib_bytes = try allocator.alloc(u8, num_ranlib_bytes);
 
                     // TODO: error handling
-                    _ = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(ranlib_bytes));
-                    seek_forward_amount = seek_forward_amount - @as(u32, @intCast(num_ranlib_bytes));
+                    _ = reader.readSliceShort(ranlib_bytes) catch |err| {
+                        printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+                        return err;
+                    };
+                    if (seek_forward_amount < num_ranlib_bytes) {
+                        // TODO: Malformed archive, log error,
+                        return error.TODO;
+                    }
+                    seek_forward_amount = seek_forward_amount - num_ranlib_bytes;
 
                     const ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
-                    const symbol_strings_length = try handleFileIoError(self.zar_io, .reading, self.name, reader.readInt(u32, endianess));
+                    const symbol_strings_length = reader.takeInt(u32, endianess) catch |err| {
+                        switch (err) {
+                            error.EndOfStream => return ParseError.NotArchive,
+                            else => |root_err| {
+                                printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                return error.ReadFailed;
+                            },
+                        }
+                    };
                     // TODO: We don't really need this information, but maybe it could come in handy
                     // later?
                     _ = symbol_strings_length;
@@ -1368,7 +1514,11 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                     const symbol_string_bytes = try allocator.alloc(u8, seek_forward_amount);
                     seek_forward_amount = 0;
-                    _ = try handleFileIoError(self.zar_io, .reading, self.name, reader.read(symbol_string_bytes));
+                    // TODO: we shouldn't discard this result right? or assert.. or something
+                    _ = reader.readSliceShort(symbol_string_bytes) catch |err| {
+                        printArchiveReadError(self.zar_io, self.name, err, &file_reader);
+                        return err;
+                    };
 
                     if (!self.modifiers.build_symbol_table) {
                         for (ranlibs) |ranlib| {
@@ -1387,16 +1537,40 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
 
                         // We have a symbol table!
                     }
-                    try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekBy(seek_forward_amount));
+                    seekByTempFix(&file_reader, seek_forward_amount) catch |err| {
+                        switch (err) {
+                            error.EndOfStream => return ParseError.NotArchive,
+                            else => |root_err| {
+                                printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                                return error.ReadFailed;
+                            },
+                        }
+                    };
                     continue;
                 }
 
-                try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(current_seek_pos));
+                file_reader.seekTo(current_seek_pos) catch |err| {
+                    switch (err) {
+                        error.EndOfStream => return ParseError.NotArchive,
+                        else => |root_err| {
+                            printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                            return error.ReadFailed;
+                        },
+                    }
+                };
             }
 
             const archive_name_buffer = try allocator.alloc(u8, archive_name_length);
 
-            try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(archive_name_buffer));
+            reader.readSliceAll(archive_name_buffer) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return ParseError.NotArchive,
+                    else => |root_err| {
+                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                        return error.ReadFailed;
+                    },
+                }
+            };
 
             seek_forward_amount = seek_forward_amount - archive_name_length;
 
@@ -1422,26 +1596,59 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
             },
         };
 
-        const offset_hack = try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.getPos());
+        const offset_hack = file_reader.logicalPos();
 
         if (self.inferred_archive_type == .gnuthin) {
-            var thin_file = try handleFileIoError(self.zar_io, .opening, trimmed_archive_name, self.zar_io.cwd.openFile(trimmed_archive_name, .{}));
+            // var thin_file = try handleFileIoError(self.zar_io, .opening, trimmed_archive_name, self.zar_io.cwd.openFile(trimmed_archive_name, .{}));
+            var thin_file = self.zar_io.cwd.openFile(trimmed_archive_name, .{}) catch {
+                // printArchiveOpenError();
+                // _ = err;
+                // TODO: handle error!
+                return error.TODO;
+            };
             defer thin_file.close();
 
-            try handleFileIoError(self.zar_io, .reading, trimmed_archive_name, thin_file.deprecatedReader().readNoEof(parsed_file.contents.bytes));
+            var thin_file_reader_buffer: [archive_reader_buffer_size]u8 = undefined;
+            var thin_file_reader = thin_file.reader(&thin_file_reader_buffer);
+            const thin_reader = &thin_file_reader.interface;
+            thin_reader.readSliceAll(parsed_file.contents.bytes) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return ParseError.NotArchive,
+                    else => |root_err| {
+                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                        return error.ReadFailed;
+                    },
+                }
+            };
         } else {
-            try handleFileIoError(self.zar_io, .reading, self.name, reader.readNoEof(parsed_file.contents.bytes));
+            reader.readSliceAll(parsed_file.contents.bytes) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return ParseError.NotArchive,
+                    else => |root_err| {
+                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                        return error.ReadFailed;
+                    },
+                }
+            };
         }
 
         if (self.modifiers.build_symbol_table) {
-            const post_offset_hack = try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.getPos());
+            const pos_offset_hack = file_reader.logicalPos();
             // TODO: Actually handle these errors!
             // … and get this working in the first place!
-            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, reader.context, @as(u32, @intCast(offset_hack))) catch {
+            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, file_reader.file, @as(u32, @intCast(offset_hack))) catch {
                 return error.TODO;
             };
 
-            try handleFileIoError(self.zar_io, .seeking, self.name, reader.context.seekTo(post_offset_hack));
+            file_reader.seekTo(pos_offset_hack) catch |err| {
+                switch (err) {
+                    error.EndOfStream => return ParseError.NotArchive,
+                    else => |root_err| {
+                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
+                        return error.ReadFailed;
+                    },
+                }
+            };
         }
 
         try self.file_name_to_index.put(allocator, trimmed_archive_name, self.files.items.len);
@@ -1452,7 +1659,7 @@ pub fn parse(self: *Archive) (ParseError || HandledIoError || CriticalError)!voi
     }
 
     if (is_first) {
-        const current_position = try handleFileIoError(self.zar_io, .accessing, self.name, reader.context.getPos());
+        const current_position = file_reader.logicalPos();
         if (current_position > magic_string.len) {
             return ParseError.MalformedArchive;
         }

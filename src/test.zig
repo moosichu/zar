@@ -608,29 +608,21 @@ fn initialiseTestData(allocator: Allocator, file_names: [][]u8, symbol_names: []
     return;
 }
 
-const targets = result: {
-    const os_fields = std.meta.fields(OperatingSystem);
-    const arch_fields = std.meta.fields(Architecture);
-    var aggregator: [(os_fields.len - 1) * (arch_fields.len - 1)]Target = undefined;
-    var target_index = 0;
-    // "for"s were inline
-    for (os_fields) |os_field| {
-        if (@as(OperatingSystem, @enumFromInt(os_field.value)) == .unknown) continue;
-        for (arch_fields) |arch_field| {
-            if (@as(Architecture, @enumFromInt(arch_field.value)) == .unknown) continue;
-            aggregator[target_index] = .{
-                .architecture = @as(Architecture, @enumFromInt(arch_field.value)),
-                .operating_system = @as(OperatingSystem, @enumFromInt(os_field.value)),
-            };
-            target_index += 1;
-        }
-    }
-    break :result aggregator;
+const targets = [_]Target{
+    // linux targets...
+    .{ .operating_system = .linux, .architecture = .aarch64 },
+    .{ .operating_system = .linux, .architecture = .x86_64 },
+    // macos targets...
+    .{ .operating_system = .macos, .architecture = .aarch64 },
+    .{ .operating_system = .macos, .architecture = .x86_64 },
+    // freebsd targets...
+    .{ .operating_system = .freebsd, .architecture = .aarch64 },
+    .{ .operating_system = .freebsd, .architecture = .x86_64 },
 };
 
 const Target = struct {
-    architecture: Architecture,
     operating_system: OperatingSystem,
+    architecture: Architecture,
 
     fn targetToArgument(target: Target) []const u8 {
         switch (target.architecture) {
@@ -878,7 +870,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
             };
         };
 
-        main.archiveMain(&zar_io, allocator, argv.items) catch {};
+        try main.archiveMain(&zar_io, allocator, argv.items);
 
         // these calls aren't needed - but just being safe
         stdout_writer.writer.flush() catch {

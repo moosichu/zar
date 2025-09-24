@@ -116,7 +116,7 @@ const version_details =
     \\
 ;
 
-pub const debug_errors = builtin.mode == .Debug;
+pub const debug_errors = true; //builtin.mode == .Debug;
 pub const log_level: std.log.Level = if (builtin.mode == .Debug) .debug else .warn;
 
 pub const Mode = enum { ar, ranlib };
@@ -273,34 +273,6 @@ pub fn main() anyerror!void {
             zar_io.printError("Unknown error occured.", .{});
         };
     };
-}
-
-pub fn linkAsArchive(zar_io: *const ZarIo, gpa: std.mem.Allocator, archive_path: []const u8, file_names_ptr: []const [*:0]const u8, archive_type: Archive.ArchiveType) !void {
-    var modifiers: Archive.Modifiers = .{};
-    modifiers.build_symbol_table = true;
-    modifiers.create = true;
-
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
-
-    var created = false;
-    const file = try openOrCreateFile(zar_io, archive_path, !modifiers.create, &created);
-    defer file.close();
-
-    var files = std.ArrayList([]const u8).init(allocator);
-    defer files.deinit();
-    for (file_names_ptr) |file_name_z| {
-        const file_name = file_name_z[0..std.mem.len(file_name_z)];
-        try files.append(file_name);
-    }
-
-    var archive = try Archive.init(allocator, zar_io, file, archive_path, archive_type, modifiers, created);
-    defer archive.deinit();
-    try archive.parse();
-    try archive.insertFiles(files.items);
-    try archive.flush();
 }
 
 pub fn archiveMain(zar_io: *const ZarIo, allocator: anytype, args: []const []const u8) (Archive.UnhandledError || Archive.HandledError)!void {
@@ -629,6 +601,7 @@ fn handleArchiveError(zar_io: *const ZarIo, err: (Archive.HandledError || Archiv
         Archive.ParseError.MalformedArchive, Archive.ParseError.Overflow, Archive.ParseError.InvalidCharacter => printArgumentError(zar_io, "Malformed archive provided.", .{}),
         error.OutOfMemory => printArgumentError(zar_io, "Program ran out of memory.", .{}),
         error.TODO => printArgumentError(zar_io, "Unimplemented feature encountered (TODO error)", .{}),
+        error.ReadFailed => {},
     }
 
     if (debug_errors) return err;
