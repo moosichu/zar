@@ -1,4 +1,4 @@
-[![CI](https://github.com/moosichu/zar/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/moosichu/zar/actions/workflows/ci.yml)
+[![CI](https://github.com/moosichu/zar/actions/workflows/ci.yml/badge.svg)](https://github.com/moosichu/zar/actions/workflows/ci.yml)
 
 This repo contains an in-progress attempt to write an [archiver](https://en.wikipedia.org/wiki/Ar_(Unix)) in [zig](https://github.com/ziglang/zig) in order to solve [this issue](https://github.com/ziglang/zig/issues/9828).
 
