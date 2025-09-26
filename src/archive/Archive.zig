@@ -141,10 +141,7 @@ pub const CriticalError = error{
     TODO,
 };
 
-pub const IoError =
-    fs.File.GetSeekPosError || fs.File.DeprecatedReader.NoEofError
-        // || no known error sets for creating a file
-    || fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || fs.File.StatError || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError;
+pub const IoError = fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || fs.File.StatError || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError;
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
@@ -814,16 +811,9 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     }
 }
 
-pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize, file: fs.File, file_offset: u32) (CriticalError || HandledIoError)!void {
+pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize) (CriticalError || HandledIoError)!void {
     // TODO: make this read directly from the file contents buffer!
-
-    // Get the file magic
-    try handleFileIoError(self.zar_io, .seeking, archived_file.name, file.seekTo(file_offset));
-
-    var magic: [4]u8 = undefined;
-    _ = try handleFileIoError(self.zar_io, .reading, archived_file.name, file.deprecatedReader().read(&magic));
-
-    try handleFileIoError(self.zar_io, .seeking, archived_file.name, file.seekTo(file_offset));
+    const magic = archived_file.contents.bytes[0..4];
 
     blk: {
         // TODO: Load object from memory (upstream zld)
@@ -887,11 +877,8 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 if (self.output_archive_type == .ambiguous) {
                     self.output_archive_type = .darwin;
                 }
-                const mtime: u64 = mtime: {
-                    const stat = file.stat() catch break :mtime 0;
-                    break :mtime @as(u64, @intCast(@divFloor(stat.mtime, 1_000_000_000)));
-                };
-
+                // As we are just extracting the symbols... we do not care about the mtime here.
+                const mtime: u64 = 0;
                 var macho_file = MachO.Object{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
                 defer macho_file.deinit(self.gpa);
 
@@ -920,20 +907,21 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                 // TODO: Figure out the condition under which a file is a coff
                 // file. This was originally just an else clause - but a file
                 // might not contain any symbols!
-                var coff_file = Coff.Object{ .file = file, .name = archived_file.name };
-                defer coff_file.deinit(allocator);
+                unreachable;
+                // var coff_file = Coff.Object{ .file = file, .name = archived_file.name };
+                // defer coff_file.deinit(allocator);
 
-                coff_file.parse(allocator, builtin.target) catch |err| return err;
+                // coff_file.parse(allocator, builtin.target) catch |err| return err;
 
-                for (coff_file.symtab.items) |sym| {
-                    if (sym.storage_class == Coff.Object.IMAGE_SYM_CLASS_EXTERNAL) {
-                        const symbol = Symbol{
-                            .name = try allocator.dupe(u8, sym.getName(&coff_file)),
-                            .file_index = file_index,
-                        };
-                        try self.symbols.append(allocator, symbol);
-                    }
-                }
+                // for (coff_file.symtab.items) |sym| {
+                //     if (sym.storage_class == Coff.Object.IMAGE_SYM_CLASS_EXTERNAL) {
+                //         const symbol = Symbol{
+                //             .name = try allocator.dupe(u8, sym.getName(&coff_file)),
+                //             .file_index = file_index,
+                //         };
+                //         try self.symbols.append(allocator, symbol);
+                //     }
+                // }
             }
         }
     }
@@ -1018,7 +1006,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
 
         // Read symbols
         if (self.modifiers.build_symbol_table) {
-            try self.addToSymbolTable(allocator, &archived_file, file_index, file, 0); // Hacking out the zld stuff so this is borked right now.
+            try self.addToSymbolTable(allocator, &archived_file, file_index);
         }
 
         // A trie-based datastructure would be better for this!
@@ -1596,8 +1584,6 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             },
         };
 
-        const offset_hack = file_reader.logicalPos();
-
         if (self.inferred_archive_type == .gnuthin) {
             // var thin_file = try handleFileIoError(self.zar_io, .opening, trimmed_archive_name, self.zar_io.cwd.openFile(trimmed_archive_name, .{}));
             var thin_file = self.zar_io.cwd.openFile(trimmed_archive_name, .{}) catch {
@@ -1633,21 +1619,8 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
         }
 
         if (self.modifiers.build_symbol_table) {
-            const pos_offset_hack = file_reader.logicalPos();
-            // TODO: Actually handle these errors!
-            // … and get this working in the first place!
-            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len, file_reader.file, @as(u32, @intCast(offset_hack))) catch {
+            self.addToSymbolTable(allocator, &parsed_file, self.files.items.len) catch {
                 return error.TODO;
-            };
-
-            file_reader.seekTo(pos_offset_hack) catch |err| {
-                switch (err) {
-                    error.EndOfStream => return ParseError.NotArchive,
-                    else => |root_err| {
-                        printArchiveReadError(self.zar_io, self.name, root_err, &file_reader);
-                        return error.ReadFailed;
-                    },
-                }
             };
         }
 
