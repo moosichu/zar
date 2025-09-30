@@ -5,12 +5,6 @@ const std = @import("std");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
 const traceNamed = @import("../tracy.zig").traceNamed;
-const fmt = std.fmt;
-const fs = std.fs;
-const mem = std.mem;
-const elf = std.elf;
-const os = std.os;
-const Elf = @import("zld/Zld.zig").Elf;
 const MachO = @import("zld/Zld.zig").MachO;
 const macho = std.macho;
 const Coff = @import("zld/Zld.zig").Coff;
@@ -30,7 +24,7 @@ const allocator_limit = 10000000;
 arena: std.heap.ArenaAllocator,
 gpa: Allocator,
 zar_io: *const ZarIo,
-file: fs.File,
+file: std.fs.File,
 name: []const u8,
 created: bool,
 
@@ -49,7 +43,7 @@ file_name_to_index: std.StringArrayHashMapUnmanaged(u64),
 
 modifiers: Modifiers,
 
-stat: fs.File.Stat,
+stat: std.fs.File.Stat,
 
 pub const ArchiveType = enum {
     ambiguous,
@@ -141,7 +135,7 @@ pub const CriticalError = error{
     TODO,
 };
 
-pub const IoError = fs.File.OpenError || fs.File.ReadError || fs.File.SeekError || fs.File.StatError || fs.File.WriteError || std.io.Writer.Error || fs.File.Writer.EndError;
+pub const IoError = std.fs.File.OpenError || std.fs.File.ReadError || std.fs.File.SeekError || std.fs.File.StatError || std.fs.File.WriteError || std.io.Writer.Error || std.fs.File.Writer.EndError;
 
 // All archive files start with this magic string
 pub const magic_string = "!<arch>\n";
@@ -307,7 +301,7 @@ pub fn getDefaultArchiveTypeFromHost() ArchiveType {
 pub fn init(
     allocator: std.mem.Allocator,
     zar_io: *const ZarIo,
-    file: fs.File,
+    file: std.fs.File,
     name: []const u8,
     output_archive_type: ArchiveType,
     modifiers: Modifiers,
@@ -407,7 +401,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     try handleFileIoError(self.zar_io, .seeking, self.name, self.file.seekTo(0));
 
     // TrackingBufferedWriter no longer appears to be necessary,
-    // as fs.File.Writer has a "pos" field and a buffer now.
+    // as std.fs.File.Writer has a "pos" field and a buffer now.
     var writer_buf: [4096]u8 = undefined;
     var file_writer = self.file.writer(&writer_buf);
     const writer = &file_writer.interface;
@@ -492,7 +486,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                 // If the file is small enough to fit in header, then just write it there
                 // Otherwise, add it to string table and add a reference to its location
-                const name = if (is_the_name_allowed) try mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
+                const name = if (is_the_name_allowed) try std.mem.concat(allocator, u8, &.{ file.name, "/" }) else try std.fmt.allocPrint(allocator, "/{}", .{blk: {
                     // Get the position of the file in string table
                     const pos = string_table.items.len;
 
@@ -668,7 +662,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files));
                 }
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(mem.sliceAsBytes(ranlibs)));
+                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(std.mem.sliceAsBytes(ranlibs)));
 
                 if (format == .darwin64) {
                     try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
@@ -823,41 +817,65 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
         // {
 
         // }
-        if (mem.eql(u8, magic[0..elf.MAGIC.len], elf.MAGIC)) {
+        if (std.mem.eql(u8, magic[0..std.elf.MAGIC.len], std.elf.MAGIC)) {
             if (self.output_archive_type == .ambiguous) {
                 // TODO: double check that this is the correct inference
                 self.output_archive_type = .gnu;
             }
-            var elf_file = Elf.Object{ .name = archived_file.name, .data = archived_file.contents.bytes };
-            defer elf_file.deinit(self.gpa);
-
-            // TODO: Do not use builtin.target like this, be more flexible!
-            elf_file.parse(self.gpa, builtin.cpu.arch) catch |err| switch (err) {
-                error.NotObject => break :blk,
-                error.OutOfMemory => return error.OutOfMemory,
-                error.TODOBigEndianSupport, error.TODOElf32bitSupport, error.EndOfStream => return error.TODO,
+            var reader = std.io.Reader.fixed(archived_file.contents.bytes);
+            const header = std.elf.Header.read(&reader) catch {
+                return error.TODO;
             };
+            var section_headers_iterator = header.iterateSectionHeadersBuffer(archived_file.contents.bytes);
+            {
+                var shdr_opt = section_headers_iterator.next() catch return error.TODO;
+                while (shdr_opt) |shdr| {
+                    defer shdr_opt = section_headers_iterator.next() catch null;
+                    const contents = contents: {
+                        var section_headers_iterator_nested = header.iterateSectionHeadersBuffer(archived_file.contents.bytes);
 
-            for (elf_file.symtab.items) |sym| {
-                switch (sym.st_info >> 4) {
-                    elf.STB_WEAK, elf.STB_GLOBAL => {
-                        if (!(elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < elf.SHN_HIRESERVE and sym.st_shndx == elf.SHN_UNDEF) or
-                            ((sym.st_shndx == elf.SHN_UNDEF) and (sym.st_value != 0)))
-                        {
-                            const symbol = Symbol{
-                                .name = try allocator.dupe(u8, elf_file.getString(sym.st_name)),
-                                .file_index = file_index,
+                        var section_counter: usize = 0;
+                        while (section_counter < shdr.sh_link) : (section_counter += 1) {
+                            _ = section_headers_iterator_nested.next() catch {
+                                return error.TODO;
                             };
-
-                            try self.symbols.append(allocator, symbol);
                         }
-                    },
-                    else => {},
+                        const shdr_nested = (section_headers_iterator_nested.next() catch return error.TODO).?;
+                        break :contents archived_file.contents.bytes[shdr_nested.sh_offset..][0..shdr_nested.sh_size];
+                    };
+                    switch (shdr.sh_type) {
+                        std.elf.SHT_SYMTAB => {
+                            const nsyms = @divExact(shdr.sh_size, @sizeOf(std.elf.Elf64_Sym));
+                            const syms = @as(
+                                [*]const std.elf.Elf64_Sym,
+                                @ptrCast(@alignCast(&archived_file.contents.bytes[shdr.sh_offset])),
+                            )[0..nsyms];
+                            for (syms) |sym| {
+                                switch (sym.st_info >> 4) {
+                                    std.elf.STB_WEAK, std.elf.STB_GLOBAL => {
+                                        if (!(std.elf.SHN_LORESERVE <= sym.st_shndx and sym.st_shndx < std.elf.SHN_HIRESERVE and sym.st_shndx == std.elf.SHN_UNDEF) or
+                                            ((sym.st_shndx == std.elf.SHN_UNDEF) and (sym.st_value != 0)))
+                                        {
+                                            const string = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(contents.ptr + sym.st_name)), 0);
+                                            const symbol = Symbol{
+                                                .name = try allocator.dupe(u8, string),
+                                                .file_index = file_index,
+                                            };
+                                            try self.symbols.append(allocator, symbol);
+                                        }
+                                    },
+                                    else => {},
+                                }
+                            }
+                        },
+                        else => {},
+                    }
                 }
             }
-        } else if (mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
+        } else if (std.mem.eql(u8, magic[0..Bitcode.magic.len], Bitcode.magic)) {
             self.zar_io.printError("Zig ar does not currently support bitcode files, so no symbol table will be constructed for {s}.", .{archived_file.name});
             break :blk;
+            // std.bitc
 
             // var bitcode_file = Bitcode{ .file = file, .name = archived_file.name };
             // defer bitcode_file.deinit(allocator);
@@ -871,7 +889,7 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
             // TODO(TRC):Now this should assert that the magic number is what we expect it to be
             // based on the parsed archive type! Not inferring what we should do based on it.
             // TODO: Should be based on target cpu arch!
-            const magic_num = mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
+            const magic_num = std.mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
             if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
                 if (self.output_archive_type == .ambiguous) {
@@ -991,7 +1009,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
             else => @as(IoError, @errorCast(e)),
         };
         var archived_file = ArchivedFile{ // was var
-            .name = try allocator.dupe(u8, fs.path.basename(file_name)),
+            .name = try allocator.dupe(u8, std.fs.path.basename(file_name)),
             .contents = Contents{
                 .bytes = try handleFileIoError(self.zar_io, .reading, file_name, bytes_or_io_error),
                 .length = size,
@@ -1023,7 +1041,7 @@ pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError 
 
 const RootError = error{ ReadFailed, Unseekable, Unexpected, AccessDenied };
 
-fn printArchiveReadError(zar_io: *const ZarIo, file_name: []const u8, root_err: RootError, file_reader: *const fs.File.Reader) void {
+fn printArchiveReadError(zar_io: *const ZarIo, file_name: []const u8, root_err: RootError, file_reader: *const std.fs.File.Reader) void {
     const err = if (file_reader.err) |err| err else root_err;
     switch (err) {
         error.InputOutput,
@@ -1077,12 +1095,12 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             return ParseError.NotArchive;
         }
 
-        const is_thin_archive = mem.eql(u8, &magic, magic_thin);
+        const is_thin_archive = std.mem.eql(u8, &magic, magic_thin);
 
         if (is_thin_archive)
             self.inferred_archive_type = .gnuthin;
 
-        if (!(mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
+        if (!(std.mem.eql(u8, &magic, magic_string) or is_thin_archive)) {
             return ParseError.NotArchive;
         }
     }
@@ -1123,7 +1141,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                 break;
             }
 
-            if (mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
+            if (std.mem.eql(u8, first_line_buffer[0..2], "//"[0..2])) {
                 switch (self.inferred_archive_type) {
                     .ambiguous => self.inferred_archive_type = .gnu,
                     .gnu, .gnuthin, .gnu64 => {},
@@ -1133,7 +1151,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                 }
 
                 const string_table_num_bytes_string = first_line_buffer[48..58];
-                const string_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, string_table_num_bytes_string, " "), 10);
+                const string_table_num_bytes = try std.fmt.parseInt(u32, std.mem.trim(u8, string_table_num_bytes_string, " "), 10);
                 // if (string_table_num_bytes > allocator_limit) {
                 //     @panic("OOM!");
                 // }
@@ -1164,7 +1182,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                 }
 
                 const symbol_table_num_bytes_string = first_line_buffer[48..58];
-                const symbol_table_num_bytes = try fmt.parseInt(u32, mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
+                const symbol_table_num_bytes = try std.fmt.parseInt(u32, std.mem.trim(u8, symbol_table_num_bytes_string, " "), 10);
 
                 // TODO: why is this big endian?
                 const num_symbols = reader.takeInt(u32, .big) catch |err| {
@@ -1293,26 +1311,26 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
 
         // the lifetime of the archive headers will matched that of the parsed files (for now)
         // so we can take a reference to the strings stored there directly!
-        var trimmed_archive_name = mem.trim(u8, &archive_header.ar_name, " ");
+        var trimmed_archive_name = std.mem.trim(u8, &archive_header.ar_name, " ");
 
         // Check against gnu naming properties
         const ends_with_gnu_slash = (trimmed_archive_name[trimmed_archive_name.len - 1] == '/');
         var gnu_offset_value: u32 = 0;
         const starts_with_gnu_offset = trimmed_archive_name[0] == '/';
         if (starts_with_gnu_offset) {
-            gnu_offset_value = try fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
+            gnu_offset_value = try std.fmt.parseInt(u32, trimmed_archive_name[1..trimmed_archive_name.len], 10);
         }
 
         const must_be_gnu = ends_with_gnu_slash or starts_with_gnu_offset or has_gnu_symbol_table;
 
         // TODO: if modifiers.use_real_timestamps_and_ids is disabled, do we ignore this from existing archive?
         // Check against llvm ar
-        const timestamp = try fmt.parseInt(u128, mem.trim(u8, &archive_header.ar_date, " "), 10);
-        const uid = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_uid, " "), 10);
-        const gid = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_gid, " "), 10);
+        const timestamp = try std.fmt.parseInt(u128, std.mem.trim(u8, &archive_header.ar_date, " "), 10);
+        const uid = try std.fmt.parseInt(u32, std.mem.trim(u8, &archive_header.ar_uid, " "), 10);
+        const gid = try std.fmt.parseInt(u32, std.mem.trim(u8, &archive_header.ar_gid, " "), 10);
 
         // Check against bsd naming properties
-        const starts_with_bsd_name_length = (trimmed_archive_name.len >= 2) and mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
+        const starts_with_bsd_name_length = (trimmed_archive_name.len >= 2) and std.mem.eql(u8, trimmed_archive_name[0..2], bsd_name_length_signifier[0..2]);
         const could_be_bsd = starts_with_bsd_name_length;
 
         // TODO: Have a proper mechanism for erroring on the wrong types of archive.
@@ -1351,13 +1369,13 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
         }
 
         if (starts_with_gnu_offset) {
-            const name_offset_in_string_table = try fmt.parseInt(u32, mem.trim(u8, trimmed_archive_name[1..trimmed_archive_name.len], " "), 10);
+            const name_offset_in_string_table = try std.fmt.parseInt(u32, std.mem.trim(u8, trimmed_archive_name[1..trimmed_archive_name.len], " "), 10);
 
             // Navigate to the start of the string in the string table
             const string_start = string_table_contents[name_offset_in_string_table..string_table_contents.len];
 
             // Find the end of the string (which is always a newline)
-            const end_string_index = mem.indexOf(u8, string_start, "\n");
+            const end_string_index = std.mem.indexOf(u8, string_start, "\n");
             if (end_string_index == null) {
                 return ParseError.MalformedArchive;
             }
@@ -1374,12 +1392,12 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             trimmed_archive_name = string_full[0 .. string_full.len - 1];
         }
 
-        var seek_forward_amount = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_size, " "), 10);
+        var seek_forward_amount = try std.fmt.parseInt(u32, std.mem.trim(u8, &archive_header.ar_size, " "), 10);
 
         // Make sure that these allocations get properly disposed of later!
         if (starts_with_bsd_name_length) {
             trimmed_archive_name = trimmed_archive_name[bsd_name_length_signifier.len..trimmed_archive_name.len];
-            const archive_name_length = try fmt.parseInt(u32, trimmed_archive_name, 10);
+            const archive_name_length = try std.fmt.parseInt(u32, trimmed_archive_name, 10);
 
             // TODO: go through int casts & don't assume that they will just work, add defensive error checking
             // for them. (an internal checked cast or similar).
@@ -1400,12 +1418,12 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                 var sorted = false;
 
                 const magic_match = magic_match_result: {
-                    if (chars_read >= bsd_symdef_magic.len and mem.eql(u8, bsd_symdef_magic, symbol_magic_check_buffer[0..bsd_symdef_magic.len])) {
+                    if (chars_read >= bsd_symdef_magic.len and std.mem.eql(u8, bsd_symdef_magic, symbol_magic_check_buffer[0..bsd_symdef_magic.len])) {
                         var magic_len = bsd_symdef_magic.len;
 
-                        if (chars_read >= bsd_symdef_64_magic.len and mem.eql(u8, bsd_symdef_64_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                        if (chars_read >= bsd_symdef_64_magic.len and std.mem.eql(u8, bsd_symdef_64_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
                             magic_len = bsd_symdef_64_magic.len;
-                        } else if (chars_read >= bsd_symdef_sorted_magic.len and mem.eql(u8, bsd_symdef_sorted_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
+                        } else if (chars_read >= bsd_symdef_sorted_magic.len and std.mem.eql(u8, bsd_symdef_sorted_magic[bsd_symdef_magic.len..], symbol_magic_check_buffer[bsd_symdef_magic.len..])) {
                             magic_len = bsd_symdef_sorted_magic.len;
                             sorted = true;
                         }
@@ -1483,7 +1501,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                     }
                     seek_forward_amount = seek_forward_amount - num_ranlib_bytes;
 
-                    const ranlibs = mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
+                    const ranlibs = std.mem.bytesAsSlice(Ranlib(IntType), ranlib_bytes);
 
                     const symbol_strings_length = reader.takeInt(u32, endianess) catch |err| {
                         switch (err) {
@@ -1510,7 +1528,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
 
                     if (!self.modifiers.build_symbol_table) {
                         for (ranlibs) |ranlib| {
-                            const symbol_string = mem.sliceTo(symbol_string_bytes[@as(u64, @intCast(ranlib.ran_strx))..], 0);
+                            const symbol_string = std.mem.sliceTo(symbol_string_bytes[@as(u64, @intCast(ranlib.ran_strx))..], 0);
 
                             const symbol = Symbol{
                                 .name = symbol_string,
@@ -1565,7 +1583,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             // strip null characters from name - TODO find documentation on this
             // could not find documentation on this being needed, but some archivers
             // seems to insert these (for alignment reasons?)
-            trimmed_archive_name = mem.trim(u8, archive_name_buffer, "\x00");
+            trimmed_archive_name = std.mem.trim(u8, archive_name_buffer, "\x00");
         } else {
             const archive_name_buffer = try allocator.alloc(u8, trimmed_archive_name.len);
             @memcpy(archive_name_buffer, trimmed_archive_name);
@@ -1577,7 +1595,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             .contents = Contents{
                 .bytes = try allocator.alignedAlloc(u8, std.mem.Alignment.of(u64), seek_forward_amount),
                 .length = seek_forward_amount,
-                .mode = try fmt.parseInt(u32, mem.trim(u8, &archive_header.ar_mode, " "), 10),
+                .mode = try std.fmt.parseInt(u32, std.mem.trim(u8, &archive_header.ar_mode, " "), 10),
                 .timestamp = timestamp,
                 .uid = uid,
                 .gid = gid,
@@ -1675,7 +1693,7 @@ pub const MRIParser = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator, file: fs.File) !Self {
+    pub fn init(allocator: Allocator, file: std.fs.File) !Self {
         const self = Self{
             .script = try file.readToEndAlloc(allocator, std.math.maxInt(usize)),
             .archive = null,
@@ -1686,17 +1704,17 @@ pub const MRIParser = struct {
     }
 
     // Returns the next token
-    fn getToken(iter: *mem.SplitIterator(u8)) ?[]const u8 {
+    fn getToken(iter: *std.mem.SplitIterator(u8)) ?[]const u8 {
         while (iter.next()) |tok| {
-            if (mem.startsWith(u8, tok, "*")) break;
-            if (mem.startsWith(u8, tok, ";")) break;
+            if (std.mem.startsWith(u8, tok, "*")) break;
+            if (std.mem.startsWith(u8, tok, ";")) break;
             return tok;
         }
         return null;
     }
 
     // Returns a slice of tokens
-    fn getTokenLine(allocator: Allocator, iter: *mem.SplitIterator(u8)) ![]const []const u8 {
+    fn getTokenLine(allocator: Allocator, iter: *std.mem.SplitIterator(u8)) ![]const []const u8 {
         var list = std.ArrayList([]const u8).init(allocator);
         errdefer list.deinit();
 
@@ -1708,11 +1726,11 @@ pub const MRIParser = struct {
 
     pub fn execute(self: *Self, allocator: Allocator, stdout: *std.io.Writer, stderr: *std.io.Writer) !void {
         // Split the file into lines
-        var parser = mem.split(u8, self.script, "\n");
+        var parser = std.mem.split(u8, self.script, "\n");
 
         while (parser.next()) |line| {
             // Split the line by spaces
-            var line_parser = mem.split(u8, line, " ");
+            var line_parser = std.mem.split(u8, line, " ");
 
             if (getToken(&line_parser)) |tok| {
                 const command_name = try allocator.dupe(u8, tok);
