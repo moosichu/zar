@@ -5,9 +5,6 @@ const std = @import("std");
 const build_options = @import("build_options");
 const trace = @import("../tracy.zig").trace;
 const traceNamed = @import("../tracy.zig").traceNamed;
-const MachO = @import("zld/Zld.zig").MachO;
-const macho = std.macho;
-const Coff = @import("zld/Zld.zig").Coff;
 const ZarIo = @import("ZarIo.zig");
 
 // We don't have any kind of bitcode parsing support at the moment, but we need
@@ -16,7 +13,6 @@ const ZarIo = @import("ZarIo.zig");
 const Bitcode = struct {
     const magic = "BC\xC0\xDE";
 };
-const coff = std.coff;
 
 const Allocator = std.mem.Allocator;
 const allocator_limit = 10000000;
@@ -891,36 +887,47 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
             // TODO: Should be based on target cpu arch!
             const magic_num = std.mem.readInt(u32, magic[0..], builtin.cpu.arch.endian());
 
-            if (magic_num == macho.MH_MAGIC or magic_num == macho.MH_MAGIC_64) {
+            if (magic_num == std.macho.MH_MAGIC or magic_num == std.macho.MH_MAGIC_64) {
                 if (self.output_archive_type == .ambiguous) {
                     self.output_archive_type = .darwin;
                 }
-                // As we are just extracting the symbols... we do not care about the mtime here.
-                const mtime: u64 = 0;
-                var macho_file = MachO.Object{ .name = archived_file.name, .mtime = mtime, .contents = archived_file.contents.bytes };
-                defer macho_file.deinit(self.gpa);
 
-                // TODO: Should be based on target cpu arch!
-                macho_file.parse(self.gpa, builtin.cpu.arch) catch |err| switch (err) {
-                    error.NotObject => break :blk,
-                    error.OutOfMemory => return error.OutOfMemory,
-                    error.UnsupportedCpuArchitecture, error.EndOfStream => return error.TODO,
+                var reader = std.io.Reader.fixed(archived_file.contents.bytes);
+                const header = reader.takeStruct(std.macho.mach_header_64, .little) catch {
+                    return error.TODO;
                 };
 
-                if (macho_file.in_symtab) |in_symtab| {
-                    for (in_symtab, 0..) |_, sym_index| {
-                        if (macho_file.getSourceSymbol(@as(u32, @intCast(sym_index)))) |sym| {
+                const lc_buffer = try allocator.alloc(u8, header.sizeofcmds);
+                defer allocator.free(lc_buffer);
+                {
+                    const amt = reader.readSliceShort(lc_buffer) catch return error.TODO;
+                    if (amt != header.sizeofcmds) return error.TODO;
+                }
+
+                var load_command_iterator = std.macho.LoadCommandIterator{
+                    .ncmds = header.ncmds,
+                    .buffer = lc_buffer,
+                };
+                while (load_command_iterator.next()) |load_command| switch (load_command.cmd()) {
+                    .SYMTAB => {
+                        const symtab_command = load_command.cast(std.macho.symtab_command).?;
+                        const strtab = archived_file.contents.bytes[symtab_command.stroff..][0..symtab_command.strsize];
+                        const symtab_buffer = archived_file.contents.bytes[symtab_command.symoff..][0 .. symtab_command.nsyms * @sizeOf(std.macho.nlist_64)];
+                        const symtab = @as([*]align(1) const std.macho.nlist_64, @ptrCast(symtab_buffer.ptr))[0..symtab_command.nsyms];
+                        for (symtab) |sym| {
                             if (sym.ext() and (sym.sect() or sym.tentative())) {
+                                const string = std.mem.sliceTo(strtab[sym.n_strx..], 0);
                                 const symbol = Symbol{
-                                    .name = try allocator.dupe(u8, macho_file.getSymbolName(@as(u32, @intCast(sym_index)))),
+                                    .name = try allocator.dupe(u8, string),
                                     .file_index = file_index,
                                 };
 
                                 try self.symbols.append(allocator, symbol);
                             }
                         }
-                    }
-                }
+                    },
+                    else => {},
+                };
             } else if (false) {
                 // TODO: Figure out the condition under which a file is a coff
                 // file. This was originally just an else clause - but a file
