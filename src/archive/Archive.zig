@@ -425,8 +425,10 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     };
 
     // Sort the symbols
+    // This exists/existed because symbol table sorting was the default!? on darwin.. it wasn't written/commented why
+    // though... so maybe we remove this at some point.
     const sort_symbol_table = switch (self.modifiers.sort_symbol_table) {
-        .ambiguous => self.output_archive_type.isDarwin(),
+        .ambiguous => false,
         .set_true => true,
         .set_false => false,
     };

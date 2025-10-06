@@ -176,7 +176,7 @@ fn openOrCreateFile(zar_io: *const ZarIo, archive_path: []const u8, print_creati
 }
 
 fn processModifier(zar_io: *const ZarIo, modifier_char: u8, modifiers: *Archive.Modifiers) bool {
-    // TODO(#63): make sure modifers are only allowed for their supported mode of
+    // TODO(#63): make sure modifiers are only allowed for their supported mode of
     // operation!
     switch (mode) {
         .ar => switch (modifier_char) {

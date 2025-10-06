@@ -170,22 +170,20 @@ test "Test MacOS aarch64" {
 }
 
 test "Test Archive With Symbols Basic" {
-    const object_names = [_][]const u8{"input1.o"};
-    const object_symbols = [_][]const []const u8{
-        &[_][]const u8{ "input1_symbol1", "input1_symbol2" },
-    };
+    const static_lib = "input1.o";
+    const dynamic_lib = "input2.so";
 
     const allocator = std.testing.allocator;
 
     var test_sequence: TestSequence = .{};
     defer test_sequence.deinit(allocator);
-    for (object_names, object_symbols) |object_name, symbols| {
-        try test_sequence.buildObjectFile(allocator, object_name, symbols);
-    }
+
+    try test_sequence.buildObjectFile(allocator, static_lib, &[_][]const u8{ "input1_symbol1", "input1_symbol2" }, .{});
+    try test_sequence.buildObjectFile(allocator, dynamic_lib, &[_][]const u8{ "input2_symbol1", "input2_symbol2" }, .{ .library_type = .dynamic });
 
     const archive_name = "test_archive.a";
     {
-        const arguments = [_][]const u8{ "rc", archive_name } ++ object_names;
+        const arguments = [_][]const u8{ "rc", archive_name, static_lib, dynamic_lib };
         try test_sequence.testArchiveOperation(allocator, &arguments);
     }
     {
@@ -221,7 +219,7 @@ test "Test Archive With Long Names And Symbols" {
     var test_sequence: TestSequence = .{};
     defer test_sequence.deinit(allocator);
     for (object_names, object_symbols) |object_name, symbols| {
-        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+        try test_sequence.buildObjectFile(allocator, object_name, symbols, .{});
     }
 
     const archive_name = "test_archive.a";
@@ -256,7 +254,7 @@ test "Test Archive Stress Test" {
     var test_sequence: TestSequence = .{};
     defer test_sequence.deinit(allocator);
     for (object_names, object_symbols) |object_name, symbols| {
-        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+        try test_sequence.buildObjectFile(allocator, object_name, symbols, .{});
     }
 
     const archive_name = "test_archive.a";
@@ -300,7 +298,7 @@ test "Test Archive Sorted" {
     var test_sequence: TestSequence = .{};
     defer test_sequence.deinit(allocator);
     for (object_names, object_symbols) |object_name, symbols| {
-        try test_sequence.buildObjectFile(allocator, object_name, symbols);
+        try test_sequence.buildObjectFile(allocator, object_name, symbols, .{});
     }
 
     const archive_name = "test_archive.a";
@@ -367,7 +365,8 @@ const TestSequence = struct {
             string_allocation: []u8,
             symbols: [][]const u8,
             object_name: []const u8,
-            pub fn init(allocator: Allocator, object_name: []const u8, symbols: []const []const u8) !BuildObjectFile {
+            options: BuildObjectFileOptions,
+            pub fn init(allocator: Allocator, object_name: []const u8, symbols: []const []const u8, options: BuildObjectFileOptions) !BuildObjectFile {
                 const owned_symbols = try allocator.alloc([]const u8, symbols.len);
 
                 var string_allocation = string_allocation: {
@@ -400,6 +399,7 @@ const TestSequence = struct {
                     .string_allocation = string_allocation,
                     .object_name = owned_object_name,
                     .symbols = owned_symbols,
+                    .options = options,
                 };
 
                 return result;
@@ -497,16 +497,22 @@ const TestSequence = struct {
         });
     }
 
+    const BuildObjectFileOptions = struct {
+        library_type: LibraryType = .static,
+    };
+
     pub fn buildObjectFile(
         test_sequence: *TestSequence,
         allocator: Allocator,
         object_name: []const u8,
         symbols: []const []const u8,
+        options: BuildObjectFileOptions,
     ) !void {
         const build_object_file = try TestOperation.BuildObjectFile.init(
             allocator,
             object_name,
             symbols,
+            options,
         );
         try test_sequence.test_operations.append(allocator, .{
             .build_object_file = build_object_file,
@@ -544,9 +550,8 @@ const TestSequence = struct {
             // if a test is going to fail anyway, this is a useful way to debug it for now..
             var cancel_cleanup = false;
             defer if (!cancel_cleanup) test_dir_info.cleanup();
-            errdefer {
-                cancel_cleanup = true;
-            }
+            errdefer cancel_cleanup = true;
+
             const llvm_format_options = [_]LlvmFormat{ .implicit, target.operating_system.toDefaultLlvmFormat() };
             // this variable is used instead of a proper caching system (for now)... let's us avoid recompiling the same files
             // over & over. (A bit hacky - what if collisions etc... but will do proper caching system later!)
@@ -564,6 +569,7 @@ const TestSequence = struct {
                                 try generateCompiledFilesWithSymbols(
                                     allocator,
                                     target,
+                                    build_object_file.options.library_type,
                                     &[_][]const u8{build_object_file.object_name},
                                     &[_][]const []const u8{build_object_file.symbols},
                                     test_dir_info,
@@ -619,6 +625,8 @@ const targets = [_]Target{
     .{ .operating_system = .freebsd, .architecture = .aarch64 },
     .{ .operating_system = .freebsd, .architecture = .x86_64 },
 };
+
+const LibraryType = enum { static, dynamic };
 
 const Target = struct {
     operating_system: OperatingSystem,
@@ -700,12 +708,10 @@ const TestDirInfo = struct {
         };
         errdefer result.tmp_dir.cleanup();
 
-        try result.tmp_dir.dir.makeDir("zar_wd");
-        result.zar_wd = try result.tmp_dir.dir.openDir("zar_wd", .{ .iterate = true });
+        result.zar_wd = try result.tmp_dir.dir.makeOpenPath("zar_wd", .{ .iterate = true });
         errdefer result.zar_wd.close();
 
-        try result.tmp_dir.dir.makeDir("llvm_ar_wd");
-        result.llvm_ar_wd = try result.tmp_dir.dir.openDir("llvm_ar_wd", .{ .iterate = true });
+        result.llvm_ar_wd = try result.tmp_dir.dir.makeOpenPath("llvm_ar_wd", .{ .iterate = true });
         errdefer result.llvm_ar_wd.close();
 
         result.cwd = try std.fs.path.join(std.testing.allocator, &[_][]const u8{
@@ -720,12 +726,10 @@ const TestDirInfo = struct {
         try self.tmp_dir.dir.deleteTree("zar_wd");
         try self.tmp_dir.dir.deleteTree("llvm_ar_wd");
 
-        try self.tmp_dir.dir.makeDir("zar_wd");
-        self.zar_wd = try self.tmp_dir.dir.openDir("zar_wd", .{ .iterate = true });
+        self.zar_wd = try self.tmp_dir.dir.makeOpenPath("zar_wd", .{ .iterate = true });
         errdefer self.zar_wd.close();
 
-        try self.tmp_dir.dir.makeDir("llvm_ar_wd");
-        self.llvm_ar_wd = try self.tmp_dir.dir.openDir("llvm_ar_wd", .{ .iterate = true });
+        self.llvm_ar_wd = try self.tmp_dir.dir.makeOpenPath("llvm_ar_wd", .{ .iterate = true });
         errdefer self.llvm_ar_wd.close();
     }
 
@@ -912,6 +916,7 @@ fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !
             .allocator = allocator,
             .argv = argv.items,
             .cwd_dir = test_dir_info.llvm_ar_wd,
+            .max_output_bytes = 100 * 1024,
         });
         break :llvm_run_result result;
     };
@@ -927,7 +932,14 @@ fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !
     try compareGeneratedArchives(test_dir_info);
 }
 
-fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Target, file_names: []const []const u8, symbol_names: []const []const []const u8, test_dir_info: TestDirInfo) !void {
+fn generateCompiledFilesWithSymbols(
+    framework_allocator: Allocator,
+    target: Target,
+    libary_type: LibraryType,
+    file_names: []const []const u8,
+    symbol_names: []const []const []const u8,
+    test_dir_info: TestDirInfo,
+) !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -940,7 +952,11 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
     try argv.ensureUnusedCapacity(framework_allocator, 7);
     argv.appendAssumeCapacity(build_options.zig_exe_path);
     argv.appendAssumeCapacity("cc");
-    argv.appendAssumeCapacity("-c");
+    switch (libary_type) {
+        .static => argv.appendAssumeCapacity("-c"),
+        .dynamic => argv.appendAssumeCapacity("--shared"),
+    }
+
     argv.appendAssumeCapacity("-o");
     const file_name_arg = argv.items.len;
     argv.appendAssumeCapacity("");
@@ -953,7 +969,7 @@ fn generateCompiledFilesWithSymbols(framework_allocator: Allocator, target: Targ
     for (file_names, symbol_names, 0..) |file_name, file_symbols, index| {
         const process_index = @mod(index, child_processes.len);
         if (index >= child_processes.len) {
-            // TODO: read results etc.
+            // TODO: read results etc. and fail tests with appropriate diagnostics if these didn't run properly
             _ = try child_processes[process_index].wait();
         }
 
