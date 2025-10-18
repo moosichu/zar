@@ -255,11 +255,6 @@ fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
     return file_writer.pos + file_writer.interface.end;
 }
 
-// This exists because seekBy is currently bugged. See: https://github.com/ziglang/zig/issues/25087
-fn seekByTempFix(file_reader: *std.fs.File.Reader, offset: i64) !void {
-    try file_reader.seekTo(@intCast(@as(i64, @intCast(file_reader.logicalPos())) + offset));
-}
-
 // deprecated
 // this is a poor way of dealing with these errors... it's too generic and really we should be context-sensitively dealing with these
 // so we can report them helpfully to the users
@@ -1295,7 +1290,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
             // Archived files must start on even byte boundaries!
             // https://www.unix.com/man-page/opensolaris/3head/ar.h/
             if (@mod(file_reader.logicalPos(), 2) == 1) {
-                seekByTempFix(&file_reader, 1) catch |err| {
+                file_reader.seekBy(1) catch |err| {
                     switch (err) {
                         error.EndOfStream => return ParseError.NotArchive,
                         else => |root_err| {
@@ -1437,7 +1432,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
 
                         if (chars_read - magic_len > 0) {
                             const seek_amount = @as(i64, @intCast(magic_len)) - @as(i64, @intCast(chars_read));
-                            seekByTempFix(&file_reader, seek_amount) catch |err| {
+                            file_reader.seekBy(seek_amount) catch |err| {
                                 switch (err) {
                                     error.EndOfStream => return ParseError.NotArchive,
                                     else => |root_err| {
@@ -1462,7 +1457,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
                         const current_pos = file_reader.logicalPos();
                         const remainder = @as(u32, @intCast((self.inferred_archive_type.getAlignment() - current_pos % self.inferred_archive_type.getAlignment()) % self.inferred_archive_type.getAlignment()));
                         seek_forward_amount = seek_forward_amount - remainder;
-                        seekByTempFix(&file_reader, remainder) catch |err| {
+                        file_reader.seekBy(remainder) catch |err| {
                             switch (err) {
                                 error.EndOfStream => return ParseError.NotArchive,
                                 else => |root_err| {
@@ -1550,7 +1545,7 @@ pub fn parse(self: *Archive) (ParseError || CriticalError)!void {
 
                         // We have a symbol table!
                     }
-                    seekByTempFix(&file_reader, seek_forward_amount) catch |err| {
+                    file_reader.seekBy(seek_forward_amount) catch |err| {
                         switch (err) {
                             error.EndOfStream => return ParseError.NotArchive,
                             else => |root_err| {
