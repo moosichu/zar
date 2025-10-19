@@ -18,7 +18,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.1
+          version: 0.15.2
       - name: Build
         run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true
       - name: Test
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.1
+          version: 0.15.2
       - name: Build
         run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true
       - name: Fetch Redis
@@ -71,6 +71,6 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.1
+          version: 0.15.2
       - name: Build
         run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true -Dtest-errors-handled=true
