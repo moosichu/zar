@@ -200,13 +200,6 @@ pub const Contents = struct {
     timestamp: u128, // file modified time
     uid: u32,
     gid: u32,
-
-    // TODO(#75): deallocation
-
-    pub fn write(self: *const Contents, out_stream: *std.Io.Writer, stderr: anytype) !void {
-        try out_stream.writeAll(self.bytes);
-        _ = stderr;
-    }
 };
 
 // An internal representation of files being archived
@@ -251,7 +244,7 @@ const ErrorContext = enum {
     writing,
 };
 
-fn calculateLogicPosition(file_writer: std.fs.File.Writer) usize {
+fn calculateLogicPosition(file_writer: *std.fs.File.Writer) usize {
     return file_writer.pos + file_writer.interface.end;
 }
 
@@ -375,9 +368,6 @@ fn calculatePadding(self: *Archive, file_pos: usize) usize {
     return padding;
 }
 
-// TODO: This needs to be integrated into the workflow
-// used for parsing. (use same error handling workflow etc.)
-/// Use same naming scheme for objects (as found elsewhere in the file).
 pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!void {
     const allocator = self.arena.allocator();
     const tracy = trace(@src());
@@ -391,16 +381,29 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
     // Overwrite all contents
     try handleFileIoError(self.zar_io, .seeking, self.name, self.file.seekTo(0));
 
-    // TrackingBufferedWriter no longer appears to be necessary,
-    // as std.fs.File.Writer has a "pos" field and a buffer now.
+    // TODO: figure out strategy for choosing a buffer size here
     var writer_buf: [4096]u8 = undefined;
     var file_writer = self.file.writer(&writer_buf);
-    const writer = &file_writer.interface;
-    defer writer.flush() catch {};
+    self.flushToWriter(allocator, &file_writer) catch |e| {
+        switch (e) {
+            error.OutOfMemory => {
+                return e;
+            },
+            else => |io_err| {
+                return printFileIoError(self.zar_io, .writing, self.name, io_err);
+            },
+        }
+    };
+    file_writer.interface.flush() catch |e| {
+        return printFileIoError(self.zar_io, .writing, self.name, e);
+    };
+}
 
-    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string));
+pub fn flushToWriter(self: *Archive, allocator: std.mem.Allocator, file_writer: *std.fs.File.Writer) !void {
+    try file_writer.interface.writeAll(if (self.output_archive_type == .gnuthin) magic_thin else magic_string);
 
     const header_names = try allocator.alloc([16]u8, self.files.items.len);
+    defer allocator.free(header_names);
 
     const SortContext = struct {
         files: std.ArrayListUnmanaged(ArchivedFile),
@@ -442,7 +445,6 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
     // Calculate the offset of file independent of string table and symbol table itself.
     // It is basically magic size + file size from position 0
-
     const relative_file_offsets = try allocator.alloc(i32, self.files.items.len);
     defer allocator.free(relative_file_offsets);
 
@@ -517,23 +519,23 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                 const magic: []const u8 = if (format == .gnu64) "/SYM64/" else "/";
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size }));
+                try file_writer.interface.print(Header.format_string, .{ magic, symtab_time, 0, 0, 0, symbol_table_size });
 
                 {
                     const tracy_scope_inner = traceNamed(@src(), "Write Symbol Count");
                     defer tracy_scope_inner.end();
                     if (format == .gnu64) {
-                        try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
+                        try file_writer.interface.writeInt(
                             u64,
                             @as(u64, @intCast(self.symbols.items.len)),
                             .big,
-                        ));
+                        );
                     } else {
-                        try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
+                        try file_writer.interface.writeInt(
                             u32,
                             @as(u32, @intCast(self.symbols.items.len)),
                             .big,
-                        ));
+                        );
                     }
                 }
 
@@ -563,22 +565,22 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
 
                     for (self.symbols.items) |symbol| {
                         if (format == .gnu64) {
-                            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
+                            try file_writer.interface.writeInt(
                                 i64,
                                 relative_file_offsets[symbol.file_index] + @as(i64, @intCast(offset_to_files)),
                                 .big,
-                            ));
+                            );
                         } else {
-                            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(
+                            try file_writer.interface.writeInt(
                                 i32,
                                 relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files)),
                                 .big,
-                            ));
+                            );
                         }
                     }
                 }
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(symbol_table));
+                try file_writer.interface.writeAll(symbol_table);
             }
 
             // Write the string table itself
@@ -589,7 +591,7 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     while (string_table.items.len % self.output_archive_type.getAlignment() != 0) {
                         try string_table.append('\n');
                     }
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items }));
+                    try file_writer.interface.print("//{s}{: <10}`\n{s}", .{ " " ** 46, string_table.items.len, string_table.items });
                 }
             }
         },
@@ -628,16 +630,17 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     int_size + // Int describing size of symbol table's strings
                     symbol_table.len; // The lengths of strings themselves
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size }));
+                try file_writer.interface.print(Header.format_string, .{ "#1/12", symtab_time, 0, 0, 0, symbol_table_size });
 
                 const endian = builtin.cpu.arch.endian();
 
                 if (format == .darwin64) {
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(bsd_symdef_64_magic));
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u64, @as(u64, @intCast(num_ranlib_bytes)), endian));
+                    try file_writer.interface.writeAll(bsd_symdef_64_magic);
+                    try file_writer.interface.writeAll(bsd_symdef_64_magic);
+                    try file_writer.interface.writeInt(u64, @as(u64, @intCast(num_ranlib_bytes)), endian);
                 } else {
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(bsd_symdef_magic ++ "\x00\x00\x00"));
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u32, @as(u32, @intCast(num_ranlib_bytes)), endian));
+                    try file_writer.interface.writeAll(bsd_symdef_magic ++ "\x00\x00\x00");
+                    try file_writer.interface.writeInt(u32, @as(u32, @intCast(num_ranlib_bytes)), endian);
                 }
 
                 const ranlibs = try allocator.alloc(Ranlib(IntType), self.symbols.items.len);
@@ -655,15 +658,15 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
                     ranlibs[idx].ran_off = relative_file_offsets[symbol.file_index] + @as(i32, @intCast(offset_to_files));
                 }
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(std.mem.sliceAsBytes(ranlibs)));
+                try file_writer.interface.writeAll(std.mem.sliceAsBytes(ranlibs));
 
                 if (format == .darwin64) {
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
+                    try file_writer.interface.writeInt(u64, @as(u64, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian);
                 } else {
-                    try handleFileIoError(self.zar_io, .writing, self.name, writer.writeInt(u32, @as(u32, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian));
+                    try file_writer.interface.writeInt(u32, @as(u32, @intCast(symbol_string_table_and_offsets.unpadded_symbol_table_length)), endian);
                 }
 
-                try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(symbol_table));
+                try file_writer.interface.writeAll(symbol_table);
             }
         },
         // This needs to be able to tell whatsupp.
@@ -708,21 +711,21 @@ pub fn flush(self: *Archive) (FlushError || HandledIoError || CriticalError)!voi
         };
 
         // TODO: handle errors
-        _ = try handleFileIoError(self.zar_io, .writing, self.name, writer.write(&header_buffer));
+        _ = try file_writer.interface.write(&header_buffer);
 
         // Write the name of the file in the data section
         if (self.output_archive_type.isBsdLike()) {
-            try handleFileIoError(self.zar_io, .writing, self.name, writer.writeAll(file.name));
-            try handleFileIoError(self.zar_io, .writing, self.name, writer.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer))));
+            try file_writer.interface.writeAll(file.name);
+            try file_writer.interface.splatByteAll(0, self.calculatePadding(calculateLogicPosition(file_writer)));
         }
 
         if (self.output_archive_type != .gnuthin) {
-            try handleFileIoError(self.zar_io, .writing, self.name, file.contents.write(writer, null));
-            try handleFileIoError(self.zar_io, .writing, self.name, writer.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer))));
+            try file_writer.interface.writeAll(file.contents.bytes);
+            try file_writer.interface.splatByteAll('\n', self.calculatePadding(calculateLogicPosition(file_writer)));
         }
     }
 
-    try handleFileIoError(self.zar_io, .writing, self.name, file_writer.end());
+    try file_writer.end();
 }
 
 pub fn deinit(self: *Archive) void {
