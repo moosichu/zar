@@ -39,8 +39,6 @@ file_name_to_index: std.StringArrayHashMapUnmanaged(u64),
 
 modifiers: Modifiers,
 
-stat: std.fs.File.Stat,
-
 pub const ArchiveType = enum {
     ambiguous,
     gnu,
@@ -129,6 +127,10 @@ pub const CriticalError = error{
     OutOfMemory,
     ReadFailed,
     TODO,
+};
+
+pub const SymbolParseError = error{
+    SymbolParseError,
 };
 
 pub const IoError = std.fs.File.OpenError || std.fs.File.ReadError || std.fs.File.SeekError || std.fs.File.StatError || std.fs.File.WriteError || std.io.Writer.Error || std.fs.File.Writer.EndError;
@@ -303,7 +305,6 @@ pub fn init(
         .symbols = .{},
         .file_name_to_index = .{},
         .modifiers = modifiers,
-        .stat = try handleFileIoError(zar_io, .stat, name, file.stat()),
         .created = created,
     };
 }
@@ -801,8 +802,7 @@ pub fn extract(self: *Archive, file_names: []const []const u8) !void {
     }
 }
 
-pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize) (CriticalError || HandledIoError)!void {
-    // TODO: make this read directly from the file contents buffer!
+pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *const ArchivedFile, file_index: usize) (CriticalError || SymbolParseError)!void {
     const magic = archived_file.contents.bytes[0..4];
 
     blk: {
@@ -820,11 +820,11 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
             }
             var reader = std.io.Reader.fixed(archived_file.contents.bytes);
             const header = std.elf.Header.read(&reader) catch {
-                return error.TODO;
+                return error.SymbolParseError;
             };
             var section_headers_iterator = header.iterateSectionHeadersBuffer(archived_file.contents.bytes);
             {
-                var shdr_opt = section_headers_iterator.next() catch return error.TODO;
+                var shdr_opt = section_headers_iterator.next() catch return error.SymbolParseError;
                 while (shdr_opt) |shdr| {
                     defer shdr_opt = section_headers_iterator.next() catch null;
                     const contents = contents: {
@@ -833,10 +833,10 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
                         var section_counter: usize = 0;
                         while (section_counter < shdr.sh_link) : (section_counter += 1) {
                             _ = section_headers_iterator_nested.next() catch {
-                                return error.TODO;
+                                return error.SymbolParseError;
                             };
                         }
-                        const shdr_nested = (section_headers_iterator_nested.next() catch return error.TODO).?;
+                        const shdr_nested = (section_headers_iterator_nested.next() catch return error.SymbolParseError).?;
                         break :contents archived_file.contents.bytes[shdr_nested.sh_offset..][0..shdr_nested.sh_size];
                     };
                     switch (shdr.sh_type) {
@@ -894,14 +894,14 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
 
                 var reader = std.io.Reader.fixed(archived_file.contents.bytes);
                 const header = reader.takeStruct(std.macho.mach_header_64, .little) catch {
-                    return error.TODO;
+                    return error.SymbolParseError;
                 };
 
                 const lc_buffer = try allocator.alloc(u8, header.sizeofcmds);
                 defer allocator.free(lc_buffer);
                 {
-                    const amt = reader.readSliceShort(lc_buffer) catch return error.TODO;
-                    if (amt != header.sizeofcmds) return error.TODO;
+                    const amt = reader.readSliceShort(lc_buffer) catch return error.SymbolParseError;
+                    if (amt != header.sizeofcmds) return error.SymbolParseError;
                 }
 
                 var load_command_iterator = std.macho.LoadCommandIterator{
@@ -952,97 +952,127 @@ pub fn addToSymbolTable(self: *Archive, allocator: Allocator, archived_file: *co
     }
 }
 
-pub fn insertFiles(self: *Archive, file_names: []const []const u8) (InsertError || HandledIoError || CriticalError)!void {
-    const allocator = self.arena.allocator();
+pub fn insertFiles(archive: *Archive, file_names: []const []const u8) (InsertError || HandledIoError || CriticalError || std.fs.File.StatError)!void {
+    const allocator = archive.arena.allocator();
+    const zar_io = archive.zar_io;
     const tracy = trace(@src());
     defer tracy.end();
 
     // TODO: distribute this across n jobs in different chunks?
     for (file_names) |file_name| {
-        // Open the file and read all of its contents
-        const file = try handleFileIoError(self.zar_io, .opening, file_name, self.zar_io.cwd.openFile(file_name, .{ .mode = .read_only }));
-        defer file.close();
-
-        // We only need to do this because file stats don't include
-        // guid and uid - maybe the right solution is to integrate that into
-        // the std so we can call file.stat() on all platforms.
-        var gid: u32 = 0;
-        var uid: u32 = 0;
-        var mtime: i128 = 0;
-        var size: u64 = undefined;
-        var mode: u64 = undefined;
-
-        // FIXME: Currently windows doesnt support the Stat struct
-        if (builtin.os.tag == .windows) {
-            const file_stats = try handleFileIoError(self.zar_io, .stat, file_name, file.stat());
-            // Convert timestamp from ns to s
-            mtime = file_stats.mtime;
-            size = file_stats.size;
-            mode = file_stats.mode;
-        } else {
-            const file_stats = try handleFileIoError(self.zar_io, .stat, file_name, std.posix.fstat(file.handle));
-
-            gid = file_stats.gid;
-            uid = file_stats.uid;
-            const mtime_full = file_stats.mtime();
-            mtime = mtime_full.sec * std.time.ns_per_s + mtime_full.nsec;
-            size = @as(u64, @intCast(file_stats.size));
-            mode = file_stats.mode;
-        }
-
-        if (self.modifiers.update_only) {
-            // TODO: Write a test that checks for this functionality still working!
-            // TODO: Is this even correct? Shouldn't it be comparing to mtime in archive already?
-            if (self.stat.mtime >= mtime and !self.created) {
-                continue;
+        archive.insertFile(allocator, file_name) catch |err| {
+            switch (err) {
+                error.SystemResources,
+                error.AccessDenied,
+                error.PermissionDenied,
+                => |err_stat| {
+                    return printFileIoError(zar_io, .stat, file_name, err_stat);
+                },
+                error.TODO => |err_todo| {
+                    return err_todo;
+                },
+                // TODO: figure out what is throwing this error
+                error.ReadFailed => |err_read_failed| return err_read_failed,
+                error.OutOfMemory => |err_out_of_memory| return err_out_of_memory,
+                else => |else_error| {
+                    return printFileIoError(zar_io, .reading, file_name, else_error);
+                },
             }
-        }
-
-        if (!self.modifiers.use_real_timestamps_and_ids) {
-            gid = 0;
-            uid = 0;
-            mtime = 0;
-            // Even though it's not documented - in deterministic mode permissions are always set to:
-            // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/include/llvm/Object/ArchiveWriter.h#L27
-            // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L105
-            mode = 644;
-        }
-
-        const timestamp = @as(u128, @intCast(@divFloor(mtime, std.time.ns_per_s)));
-
-        // Extract critical error from error set - so IO errors can be handled seperately
-        const bytes_or_io_error = file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, std.mem.Alignment.of(u64), null) catch |e| switch (e) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => @as(IoError, @errorCast(e)),
         };
-        var archived_file = ArchivedFile{ // was var
-            .name = try allocator.dupe(u8, std.fs.path.basename(file_name)),
-            .contents = Contents{
-                .bytes = try handleFileIoError(self.zar_io, .reading, file_name, bytes_or_io_error),
-                .length = size,
-                .mode = mode,
-                .timestamp = timestamp,
-                .gid = gid,
-                .uid = uid,
-            },
+    }
+}
+
+fn insertFile(self: *Archive, allocator: Allocator, file_name: []const u8) !void {
+    // Open the file and read all of its contents
+    const file = try self.zar_io.cwd.openFile(file_name, .{ .mode = .read_only });
+    defer file.close();
+
+    // We only need to do this because file stats don't include
+    // guid and uid - maybe the right solution is to integrate that into
+    // the std so we can call file.stat() on all platforms.
+    var gid: u32 = 0;
+    var uid: u32 = 0;
+    var mtime: i128 = 0;
+    var size: u64 = undefined;
+    var mode: u64 = undefined;
+
+    // FIXME: Currently windows doesnt support the Stat struct
+    if (builtin.os.tag == .windows) {
+        const file_stats = try file.stat();
+        // Convert timestamp from ns to s
+        mtime = file_stats.mtime;
+        size = file_stats.size;
+        mode = file_stats.mode;
+    } else {
+        const file_stats = try std.posix.fstat(file.handle);
+
+        gid = file_stats.gid;
+        uid = file_stats.uid;
+        const mtime_full = file_stats.mtime();
+        mtime = mtime_full.sec * std.time.ns_per_s + mtime_full.nsec;
+        size = @as(u64, @intCast(file_stats.size));
+        mode = file_stats.mode;
+    }
+
+    if (self.modifiers.update_only) {
+        const stat = try self.file.stat();
+        // TODO: Write a test that checks for this functionality still working!
+        // TODO: Is this even correct? Shouldn't it be comparing to mtime in archive already?
+        if (stat.mtime >= mtime and !self.created) {
+            return;
+        }
+    }
+
+    if (!self.modifiers.use_real_timestamps_and_ids) {
+        gid = 0;
+        uid = 0;
+        mtime = 0;
+        // Even though it's not documented - in deterministic mode permissions are always set to:
+        // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/include/llvm/Object/ArchiveWriter.h#L27
+        // https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/lib/Object/ArchiveWriter.cpp#L105
+        mode = 644;
+    }
+
+    const timestamp = @as(u128, @intCast(@divFloor(mtime, std.time.ns_per_s)));
+
+    // Extract critical error from error set - so IO errors can be handled seperately
+    const bytes = try file.readToEndAllocOptions(allocator, std.math.maxInt(usize), size, std.mem.Alignment.of(u64), null);
+    var archived_file = ArchivedFile{ // was var
+        .name = try allocator.dupe(u8, std.fs.path.basename(file_name)),
+        .contents = Contents{
+            .bytes = bytes,
+            .length = size,
+            .mode = mode,
+            .timestamp = timestamp,
+            .gid = gid,
+            .uid = uid,
+        },
+    };
+
+    const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
+
+    // Read symbols
+    if (self.modifiers.build_symbol_table) {
+        self.addToSymbolTable(allocator, &archived_file, file_index) catch |e| switch (e) {
+            // If we fail to parse symbols, that's fine - just swallow the error and continue
+            // this is OK (I think) because an archiver should be able to archive arbitrary
+            // files and a file being archive *could* happen to have a shape that makes it
+            // looks like it has symbols when it actually doesn't? So we just don't add them.
+            // Saying that:
+            // TODO: Check this is how LLVM ar deals with this stuff.
+            error.SymbolParseError => {},
+            else => |else_error| return else_error,
         };
+    }
 
-        const file_index = if (self.file_name_to_index.get(file_name)) |file_id| file_id else self.files.items.len;
-
-        // Read symbols
-        if (self.modifiers.build_symbol_table) {
-            try self.addToSymbolTable(allocator, &archived_file, file_index);
-        }
-
-        // A trie-based datastructure would be better for this!
-        const getOrPutResult = try self.file_name_to_index.getOrPut(allocator, archived_file.name);
-        if (getOrPutResult.found_existing) {
-            const existing_index = getOrPutResult.value_ptr.*;
-            self.files.items[existing_index] = archived_file;
-        } else {
-            getOrPutResult.value_ptr.* = self.files.items.len;
-            try self.files.append(allocator, archived_file);
-        }
+    // A trie-based datastructure would be better for this!
+    const getOrPutResult = try self.file_name_to_index.getOrPut(allocator, archived_file.name);
+    if (getOrPutResult.found_existing) {
+        const existing_index = getOrPutResult.value_ptr.*;
+        self.files.items[existing_index] = archived_file;
+    } else {
+        getOrPutResult.value_ptr.* = self.files.items.len;
+        try self.files.append(allocator, archived_file);
     }
 }
 

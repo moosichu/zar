@@ -229,7 +229,7 @@ fn processModifier(zar_io: *const ZarIo, modifier_char: u8, modifiers: *Archive.
     return true;
 }
 
-pub fn main() anyerror!void {
+pub fn main() !void {
     const tracy = trace(@src());
     defer tracy.end();
 
@@ -259,11 +259,12 @@ pub fn main() anyerror!void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const args = process.argsAlloc(allocator) catch |err| if (debug_errors) {
+    const args = process.argsAlloc(allocator) catch |err| {
+        switch (err) {
+            error.OutOfMemory => zar_io.printError("Internal allocation failed when parsing the command line arguments", .{}),
+            error.Overflow => zar_io.printError("Internal overflow error occurred when parsing the command line arguments", .{}),
+        }
         return err;
-    } else {
-        zar_io.printError("Unknown error occured.", .{});
-        return;
     };
 
     archiveMain(&zar_io, allocator, args) catch |err| {
@@ -522,7 +523,7 @@ pub fn archiveMain(zar_io: *const ZarIo, allocator: anytype, args: []const []con
             defer archive.deinit();
             try archive.parse();
             for (archive.files.items) |parsed_file| {
-                parsed_file.contents.write(zar_io.stdout, zar_io.stderr) catch {};
+                zar_io.stdout.writeAll(parsed_file.contents.bytes) catch {};
             }
         },
         .print_symbols => {
