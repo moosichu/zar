@@ -42,6 +42,50 @@ const invoke_zar_as_child_process = false;
 
 // TODO: sort these out :)
 
+const ChildProcessWorkaroundError = std.process.Child.RunError || std.os.windows.GetFinalPathNameByHandleError;
+
+/// Workaround the fact https://github.com/ziglang/zig/issues/5190 isn't
+/// supported on windows.
+pub fn childProcessRunWorkaround(args: struct {
+    allocator: mem.Allocator,
+    argv: []const []const u8,
+    cwd: ?[]const u8 = null,
+    cwd_dir: ?fs.Dir = null,
+    env_map: ?*const std.process.EnvMap = null,
+    max_output_bytes: usize = 50 * 1024,
+    expand_arg0: std.process.Child.Arg0Expand = .no_expand,
+    progress_node: std.Progress.Node = std.Progress.Node.none,
+}) ChildProcessWorkaroundError!std.process.Child.RunResult {
+    var args_updated = args;
+    defer if (builtin.os.tag == .windows and args.cwd_dir != null) {
+        if (args_updated.cwd) |cwd| {
+            args.allocator.free(cwd);
+        }
+    };
+    if (builtin.os.tag == .windows) {
+        if (args.cwd_dir) |cwd_dir| {
+            args_updated.cwd_dir = null;
+            var dir_path_buffer: [std.os.windows.PATH_MAX_WIDE]u16 = undefined;
+            const dir_path_u16 = try std.os.windows.GetFinalPathNameByHandle(
+                cwd_dir.fd,
+                .{},
+                &dir_path_buffer,
+            );
+            args_updated.cwd = try std.unicode.wtf16LeToWtf8Alloc(args.allocator, dir_path_u16);
+        }
+    }
+    return std.process.Child.run(.{
+        .allocator = args_updated.allocator,
+        .argv = args_updated.argv,
+        .cwd = args_updated.cwd,
+        .cwd_dir = args_updated.cwd_dir,
+        .env_map = args_updated.env_map,
+        .max_output_bytes = args_updated.max_output_bytes,
+        .expand_arg0 = args_updated.expand_arg0,
+        .progress_node = args_updated.progress_node,
+    });
+}
+
 test "Test Argument Errors" {
     if (builtin.target.os.tag == .windows) {
         return;
@@ -836,7 +880,7 @@ fn invokeZar(allocator: mem.Allocator, arguments: []const []const u8, test_dir_i
                 logger.err("{s}", .{arg});
             }
         }
-        const result = try std.process.Child.run(.{
+        const result = try childProcessRunWorkaround(.{
             .allocator = allocator,
             .argv = argv.items,
             .cwd_dir = test_dir_info.zar_wd,
@@ -912,7 +956,7 @@ fn compareArchivers(arguments: []const []const u8, test_dir_info: TestDirInfo) !
         try argv.append(allocator, "ar");
         try argv.appendSlice(allocator, arguments);
 
-        const result = try std.process.Child.run(.{
+        const result = try childProcessRunWorkaround(.{
             .allocator = allocator,
             .argv = argv.items,
             .cwd_dir = test_dir_info.llvm_ar_wd,
@@ -992,6 +1036,7 @@ fn generateCompiledFilesWithSymbols(
         argv.items[source_name_arg] = source_file_name;
 
         child_processes[process_index] = std.process.Child.init(argv.items, framework_allocator);
+        // TODO: make this use cwd_dir when supported on Windows
         child_processes[process_index].cwd = test_dir_info.cwd;
         try child_processes[process_index].spawn();
     }
