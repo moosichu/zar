@@ -1,0 +1,22 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build and test
+    timeout-minutes: 15
+    runs-on: codeberg-small
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Build
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true
+      - name: Test
+        run: zig build -Dmimmick-broken-cross-compiled-llvm-ar-behaviour=true test
