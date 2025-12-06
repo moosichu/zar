@@ -1,6 +1,12 @@
+Codeberg Runner Status:
+[![CI](http://codeberg.org/Moosichu/zar/badges/workflows/ci.yml/badge.svg)](https://codeberg.org/Moosichu/zar/actions?workflow=ci.yml)
+
+Github Runner Status:
 [![CI](https://github.com/moosichu/zar/actions/workflows/ci.yml/badge.svg)](https://github.com/moosichu/zar/actions/workflows/ci.yml)
 
 This repo contains an in-progress attempt to write an [archiver](https://en.wikipedia.org/wiki/Ar_(Unix)) in [zig](https://github.com/ziglang/zig) in order to solve [this issue](https://github.com/ziglang/zig/issues/9828).
+
+Note: This please file issues and pull requests on [Codeberg](https://codeberg.org/Moosichu/zar), the github repository is a mirror of that.
 
 ## Current Status
 
